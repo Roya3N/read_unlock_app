@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "read_unlock_app",
+            "request": "launch",
+            "type": "dart",
+            "args": [
+                "--web-renderer",
+                "html",
+                "--web-browser-flag",
+                "--disable-web-security"
+            ]
+        }
+    ]
+}
