@@ -15,6 +15,14 @@ class BookRewardDecision {
     this.rejectionMessage,
   });
 
+  /// What the server granted (see finish_reading in the Supabase
+  /// migrations, which applies [BookRewardRules]).
+  const BookRewardDecision.fromServer({
+    required bool firstRead,
+    required int xp,
+    required int minutes,
+  }) : this._(granted: true, firstRead: firstRead, xp: xp, minutes: minutes);
+
   const BookRewardDecision.rejected(String message)
     : this._(
         granted: false,

@@ -1,6 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 
 class ScreenTimeToday {
@@ -9,30 +9,45 @@ class ScreenTimeToday {
   const ScreenTimeToday({required this.dailyLimit, required this.usedToday});
 }
 
-/// Records recreational minutes used per day in
-/// `daily_activity/{yyyy-MM-dd}.screenMinutes` and reads the parent's
-/// `dailyLimitMinutes` from the child doc. Learning minutes stay in
-/// `minutes`, so the two are never mixed.
+/// Result of asking the server to start a screen-time session.
+class ScreenSessionStart {
+  final bool ok;
+  final String? sessionId;
+  final DateTime? endsAt;
+
+  /// 'not_enough_minutes', 'daily_limit', 'session_running' or 'error'.
+  final String? reason;
+  final int? leftToday;
+
+  const ScreenSessionStart({
+    required this.ok,
+    this.sessionId,
+    this.endsAt,
+    this.reason,
+    this.leftToday,
+  });
+}
+
+/// Screen time is counted by the server: starting a session takes the
+/// minutes after checking the balance and the parent's daily limit, and
+/// ending early refunds the unused whole minutes by the server clock.
+/// Learning minutes are stored separately and never mixed in.
 class ScreenTimeService {
   static String todayKey([DateTime? now]) =>
       DateFormat('yyyy-MM-dd').format(now ?? DateTime.now());
 
-  static DocumentReference? _todayRef() =>
-      AppState.currentChildRef?.collection('daily_activity').doc(todayKey());
-
   static Future<ScreenTimeToday> loadToday() async {
-    final childRef = AppState.currentChildRef;
-    if (childRef == null) {
+    final childId = AppState.activeChildId;
+    if (childId.isEmpty || !Backend.isSignedIn) {
       return const ScreenTimeToday(dailyLimit: 0, usedToday: 0);
     }
     try {
-      final results = await Future.wait([childRef.get(), _todayRef()!.get()]);
-      final child = results[0].data() as Map<String, dynamic>?;
-      final today = results[1].data() as Map<String, dynamic>?;
-      final limit = child?['dailyLimitMinutes'];
-      final used = today?['screenMinutes'];
+      final child = await Children.get(childId);
+      final days = await Children.dailyActivity(childId, days: 1);
+      final today = days.where((d) => d['day'] == todayKey()).toList();
+      final used = today.isEmpty ? 0 : today.first['screen_minutes'];
       return ScreenTimeToday(
-        dailyLimit: limit is int ? limit : 0,
+        dailyLimit: child?['dailyLimitMinutes'] as int? ?? 0,
         usedToday: used is int ? used : 0,
       );
     } catch (e) {
@@ -41,24 +56,46 @@ class ScreenTimeService {
     }
   }
 
-  /// [minutes] may be negative for a refund.
-  static Future<void> recordUsed(int minutes) async {
-    final ref = _todayRef();
-    if (ref == null || minutes == 0) return;
+  static Future<ScreenSessionStart> start(int minutes) async {
+    final childId = AppState.activeChildId;
+    if (childId.isEmpty || !Backend.isSignedIn) {
+      return const ScreenSessionStart(ok: false, reason: 'error');
+    }
     try {
-      await ref.set({
-        'date': todayKey(),
-        'screenMinutes': FieldValue.increment(minutes),
-      }, SetOptions(merge: true));
+      final r = await Rewards.startScreenSession(childId, minutes);
+      await AppState.refreshActiveChild();
+      if (r['ok'] == true) {
+        return ScreenSessionStart(
+          ok: true,
+          sessionId: r['session_id']?.toString(),
+          endsAt: DateTime.tryParse(r['ends_at']?.toString() ?? '')?.toLocal(),
+        );
+      }
+      return ScreenSessionStart(
+        ok: false,
+        reason: r['reason']?.toString() ?? 'error',
+        leftToday: r['left_today'] as int?,
+      );
     } catch (e) {
-      debugPrint("Screen time record error: $e");
+      debugPrint("Start session error: $e");
+      return const ScreenSessionStart(ok: false, reason: 'error');
     }
   }
 
-  static Future<void> setDailyLimit(
-    DocumentReference childRef,
-    int minutes,
-  ) async {
-    await childRef.update({'dailyLimitMinutes': minutes});
+  /// Ends a session early. Returns the minutes given back.
+  static Future<int> end(String sessionId) async {
+    try {
+      final r = await Rewards.endScreenSession(sessionId);
+      await AppState.refreshActiveChild();
+      final refunded = r['refunded'];
+      return refunded is int ? refunded : 0;
+    } catch (e) {
+      debugPrint("End session error: $e");
+      return 0;
+    }
+  }
+
+  static Future<void> setDailyLimit(String childId, int minutes) async {
+    await Children.updateProfile(childId, dailyLimitMinutes: minutes);
   }
 }
