@@ -3,9 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:ui';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
+import 'package:read_unlock_app/core/utils/progress_service.dart';
 import 'package:flutter_tts/flutter_tts.dart'; // ⭐️ پکیج صدا اضافه شد
 
 class DrawingStroke {
@@ -178,21 +177,14 @@ class _LetterTracingScreenState extends State<LetterTracingScreen> {
 
     try {
       if (AppState.activeChildId.isNotEmpty) {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user != null) {
-          await FirebaseFirestore.instance
-              .collection('parents')
-              .doc(user.uid)
-              .collection('children')
-              .doc(AppState.activeChildId)
-              .update({
-                'xp': FieldValue.increment(earnedXp),
-                // ⭐️ این خط جادویی رو اضافه کنید: حرف رو تو کیف کارت‌هاش ذخیره می‌کنه
-                'unlockedCards': FieldValue.arrayUnion([
-                  widget.letter.toUpperCase(),
-                ]),
-              });
-        }
+        // The server grants the XP (and returns how much); the letter's
+        // sticker card is unlocked by the journey's reward stage
+        // (complete_letter), not from the app.
+        earnedXp = await ProgressService.logActivity(
+          xpEarned: earnedXp,
+          playedMinutes: 0,
+          activityName: 'letter_tracing',
+        );
       }
       if (mounted) {
         Navigator.pop(context);

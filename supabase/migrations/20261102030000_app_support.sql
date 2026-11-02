@@ -83,3 +83,29 @@ begin
 end;
 $$;
 revoke all on function public.handle_new_user() from public, anon, authenticated;
+
+-- Age group labels such as "Pre-teens (10-12 years)" are longer than 20.
+alter table public.children drop constraint if exists children_age_group_check;
+alter table public.children add constraint children_age_group_check
+  check (age_group is null or char_length(age_group) <= 40);
+
+-- Lets a parent delete their own account from the app (app stores require
+-- this). Removing the sign-in account removes the parent row and, through
+-- the cascades, their children and all of the children's data.
+create or replace function public.delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (select auth.uid());
+begin
+  if v_uid is null then
+    raise exception 'not signed in' using errcode = '42501';
+  end if;
+  delete from auth.users where id = v_uid;
+end;
+$$;
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;

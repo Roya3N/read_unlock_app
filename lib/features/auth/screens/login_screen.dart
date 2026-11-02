@@ -2,7 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // 🌟 ایمپورت جدید برای خواندن تنظیمات
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/features/child/screens/parent_signup_screen.dart';
 import 'package:read_unlock_app/features/dashboard/screens/dashboard_screen.dart';
 import 'package:read_unlock_app/services/app_logger.dart';
@@ -38,66 +38,69 @@ class _LoginScreenState extends State<LoginScreen> {
       // ==========================================
       // 🛑 قفل توقف اضطراری (Maintenance Mode Check)
       // ==========================================
+      bool isMaintenance = false;
       try {
-        final configDoc = await FirebaseFirestore.instance
-            .collection('config')
-            .doc('economy')
-            .get();
-        if (configDoc.exists) {
-          final isMaintenance = configDoc.data()?['maintenance_mode'] ?? false;
-          final userEmail = _emailController.text.trim();
-
-          // اگر اپلیکیشن در حالت تعمیره و کسی که داره لاگین می‌کنه ادمین نیست:
-          if (isMaintenance && userEmail != "roya3n@gmail.com") {
-            // ⭐️ این خط رو دقیقاً اینجا اضافه کن:
-            AppLogger.warning(
-              "Blocked login attempt due to maintenance: $userEmail",
-            );
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Row(
-                    children: [
-                      Icon(Icons.build_rounded, color: Colors.white),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          "App is under maintenance! We'll be back soon. 🛠️",
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                  backgroundColor: const Color(0xFFF59E0B), // رنگ نارنجی هشدار
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                ),
-              );
-            }
-            setState(() => _isLoading = false);
-            return; // ⛔️ همینجا عملیات لاگین رو متوقف کن و پایین‌تر نرو
-          }
-        }
+        final economy = await AppConfig.get('economy');
+        isMaintenance = economy['maintenance_mode'] == true;
       } catch (e) {
         // به جای اینکه فقط تو گوشی پرینت بشه، الان مستقیم میره تو داشبورد ادمینت!
         AppLogger.error("Failed to check Maintenance Mode", e);
       }
       // ==========================================
 
-      // اگر از قفل رد شد، پروسه لاگین عادی رو ادامه بده
+      final userEmail = _emailController.text.trim();
       final result = await _authService.signIn(
-        _emailController.text.trim(),
+        userEmail,
         _passwordController.text.trim(),
       );
 
+      // اگر اپلیکیشن در حالت تعمیره، فقط ادمین (طبق دیتابیس) اجازه ورود داره
+      if (result == null && isMaintenance) {
+        bool isAdmin = false;
+        try {
+          isAdmin = await Backend.db.rpc('is_admin') == true;
+        } catch (e) {
+          AppLogger.error("Failed to check admin role", e);
+        }
+
+        if (!isAdmin) {
+          AppLogger.warning(
+            "Blocked login attempt due to maintenance: $userEmail",
+          );
+          await _authService.signOut();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Row(
+                  children: [
+                    Icon(Icons.build_rounded, color: Colors.white),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        "App is under maintenance! We'll be back soon. 🛠️",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: const Color(0xFFF59E0B), // رنگ نارنجی هشدار
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
+              ),
+            );
+            setState(() => _isLoading = false);
+          }
+          return; // ⛔️ همینجا عملیات لاگین رو متوقف کن و پایین‌تر نرو
+        }
+      }
+
+      if (!mounted) return;
       setState(() => _isLoading = false);
 
       if (result == null) {
-        AppLogger.info(
-          "Admin/Parent logged in successfully: ${_emailController.text.trim()}",
-        );
+        AppLogger.info("Admin/Parent logged in successfully: $userEmail");
         if (!mounted) return;
         HapticFeedback.heavyImpact();
         Navigator.pushAndRemoveUntil(

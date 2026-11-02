@@ -1,4 +1,4 @@
-/// Pure reward rules for finishing a book, kept free of Firebase so they can
+/// Pure reward rules for finishing a book, kept free of the backend so they can
 /// be unit tested.
 class BookRewardDecision {
   final bool granted;

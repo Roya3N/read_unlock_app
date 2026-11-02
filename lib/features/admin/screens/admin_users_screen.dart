@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:ui';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 
 class AdminUsersScreen extends StatefulWidget {
   const AdminUsersScreen({super.key});
@@ -15,6 +15,38 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   final Color bgDark = const Color(0xFF0D0D17);
   final Color accentColor = const Color(0xFFF59E0B); // نارنجی رادار
   String searchQuery = "";
+
+  late Future<List<Map<String, dynamic>>> _childrenFuture = _fetchChildren();
+
+  // ⭐️ ادمین از طریق RLS همه‌ی بچه‌ها و والدین را می‌بیند
+  Future<List<Map<String, dynamic>>> _fetchChildren() async {
+    final rows = await Backend.db.from('children').select().order('created_at');
+
+    // ایمیل والدین (اگر خواندنش شکست خورد، لیست بچه‌ها باز هم نمایش داده می‌شود)
+    final parentEmails = <String, String?>{};
+    try {
+      final parents = await Backend.db.from('parents').select('id,email,name');
+      for (final p in parents) {
+        parentEmails[p['id'].toString()] = p['email']?.toString();
+      }
+    } catch (e) {
+      debugPrint("Admin parents load error: $e");
+    }
+
+    return rows.map((row) {
+      final parentId = row['parent_id']?.toString();
+      return <String, dynamic>{
+        ...childFromRow(row),
+        'parentId': parentId,
+        'parentFound': parentEmails.containsKey(parentId),
+        'parentEmail': parentEmails[parentId],
+      };
+    }).toList();
+  }
+
+  void _reload() {
+    setState(() => _childrenFuture = _fetchChildren());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -60,17 +92,18 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           ),
 
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              // ⭐️ استفاده از collectionGroup برای پیدا کردن تمام بچه‌ها در کل دیتابیس
-              stream: FirebaseFirestore.instance
-                  .collectionGroup('children')
-                  .snapshots(),
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: _childrenFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                final docs = snapshot.data?.docs ?? [];
+                if (snapshot.hasError) {
+                  debugPrint("Admin users load error: ${snapshot.error}");
+                }
+
+                final docs = snapshot.data ?? [];
 
                 // فیلتر کردن بر اساس جستجو
                 final filteredDocs = docs.where((doc) {
@@ -91,15 +124,10 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   itemCount: filteredDocs.length,
                   itemBuilder: (context, index) {
-                    final data =
-                        filteredDocs[index].data() as Map<String, dynamic>;
-                    final docId = filteredDocs[index].id;
-                    final parentRef = filteredDocs[index]
-                        .reference
-                        .parent
-                        .parent; // ارجاع به والد
+                    final data = filteredDocs[index];
+                    final docId = data['id'] as String;
 
-                    return _buildUserCard(data, docId, parentRef);
+                    return _buildUserCard(data, docId);
                   },
                 );
               },
@@ -110,11 +138,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     );
   }
 
-  Widget _buildUserCard(
-    Map<String, dynamic> data,
-    String childId,
-    DocumentReference? parentRef,
-  ) {
+  Widget _buildUserCard(Map<String, dynamic> data, String childId) {
     return Container(
       margin: const EdgeInsets.only(bottom: 15),
       padding: const EdgeInsets.all(15),
@@ -147,26 +171,17 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 ),
 
                 // 💎 بخش جدید: نمایش ایمیل یا نام والد
-                FutureBuilder<DocumentSnapshot>(
-                  future: parentRef?.get(),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasData && snapshot.data!.exists) {
-                      final pData =
-                          snapshot.data!.data() as Map<String, dynamic>;
-                      return Text(
-                        "Parent: ${pData['email'] ?? 'No Email'}",
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.4),
-                          fontSize: 11,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      );
-                    }
-                    return const SizedBox(
-                      height: 14,
-                    ); // فضای رزرو شده تا لود بشه
-                  },
-                ),
+                if (data['parentFound'] == true)
+                  Text(
+                    "Parent: ${data['parentEmail'] ?? 'No Email'}",
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.4),
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  )
+                else
+                  const SizedBox(height: 14), // فضای رزرو شده
 
                 Text(
                   "ID: $childId",
@@ -194,18 +209,14 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           const SizedBox(width: 10),
           IconButton(
             icon: const Icon(Icons.tune_rounded, color: Colors.white54),
-            onPressed: () => _showEditDialog(data, childId, parentRef),
+            onPressed: () => _showEditDialog(data, childId),
           ),
         ],
       ),
     ).animate().fadeIn().slideX(begin: 0.1);
   }
 
-  void _showEditDialog(
-    Map<String, dynamic> data,
-    String childId,
-    DocumentReference? parentRef,
-  ) {
+  void _showEditDialog(Map<String, dynamic> data, String childId) {
     final xpController = TextEditingController(text: data['xp'].toString());
     final timeController = TextEditingController(
       text: data['timeBalance'].toString(),
@@ -250,17 +261,15 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           ElevatedButton(
             onPressed: () async {
               try {
-                // ⭐️ استفاده مستقیم از رفرنس خود داکیومنت برای امنیت و سرعت بیشتر
-                await FirebaseFirestore.instance
-                    .collection('parents')
-                    .doc(parentRef?.id) // گرفتن ID والد
-                    .collection('children')
-                    .doc(childId)
-                    .update({
-                      'xp': int.parse(xpController.text),
-                      'timeBalance': int.parse(timeController.text),
-                    });
+                // ⭐️ تغییر XP و زمان فقط از طریق تابع سرور (با ثبت در تاریخچه)
+                await Rewards.adminSetChildRewards(
+                  childId,
+                  xp: int.parse(xpController.text),
+                  timeBalance: int.parse(timeController.text),
+                  reason: 'admin_users_screen',
+                );
 
+                if (mounted) _reload();
                 if (context.mounted) {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(

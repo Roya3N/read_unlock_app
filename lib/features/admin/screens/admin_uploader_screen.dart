@@ -2,9 +2,10 @@ import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/safe_action.dart';
+import 'package:read_unlock_app/features/reading/models/book_model.dart';
 
 class AdminBookUploader extends StatefulWidget {
   const AdminBookUploader({super.key});
@@ -84,11 +85,8 @@ class _AdminBookUploaderState extends State<AdminBookUploader> {
         bookData['vocabulary'] = [];
       }
 
-      // اضافه کردن مهر زمانِ اتوماتیک سرور
-      bookData['createdAt'] = FieldValue.serverTimestamp();
-
-      // ارسال به دیتابیس
-      await FirebaseFirestore.instance.collection('books').add(bookData);
+      // ارسال به دیتابیس (created_at را خود دیتابیس پر می‌کند)
+      await Backend.db.from('books').insert(Book.rowFromJson(bookData));
 
       HapticFeedback.heavyImpact();
       _showProSnackBar("🎉 Magic! Book injected into '$category'!");
@@ -369,7 +367,7 @@ class _AdminBookUploaderState extends State<AdminBookUploader> {
                                       ),
                                       child: const Center(
                                         child: Text(
-                                          "Inject to Firebase 🚀",
+                                          "Inject to Database 🚀",
                                           style: TextStyle(
                                             color: Colors.white,
                                             fontSize: 18,

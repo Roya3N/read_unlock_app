@@ -1,11 +1,23 @@
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:read_unlock_app/core/utils/app_state.dart';
+import 'package:read_unlock_app/core/services/screen_time_service.dart';
 
 class TimerScreen extends StatefulWidget {
   final int minutes;
-  const TimerScreen({super.key, required this.minutes});
+
+  /// The server session this timer shows (from ScreenTimeService.start).
+  final String sessionId;
+
+  /// When the server says the session ends.
+  final DateTime endsAt;
+
+  const TimerScreen({
+    super.key,
+    required this.minutes,
+    required this.sessionId,
+    required this.endsAt,
+  });
 
   @override
   State<TimerScreen> createState() => _TimerScreenState();
@@ -21,10 +33,14 @@ class _TimerScreenState extends State<TimerScreen> {
   void initState() {
     super.initState();
     totalSeconds = widget.minutes * 60;
-    secondsLeft = totalSeconds;
-    // Count against the clock, so the timer stays correct even if the app
-    // is paused in the background.
-    _endsAt = DateTime.now().add(Duration(seconds: totalSeconds));
+    // Count down to the server's end time, so the timer stays correct even
+    // if the app is paused in the background.
+    _endsAt = widget.endsAt;
+    secondsLeft = _endsAt
+        .difference(DateTime.now())
+        .inSeconds
+        .clamp(0, totalSeconds)
+        .toInt();
 
     timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       final remaining = _endsAt.difference(DateTime.now()).inSeconds;
@@ -41,12 +57,11 @@ class _TimerScreenState extends State<TimerScreen> {
   @override
   void dispose() {
     timer?.cancel();
-    // Minutes were taken up front; give back whole minutes not used when
-    // the session ends early.
+    // Minutes were taken up front by the server. Closing early ends the
+    // session there; the server refunds unused whole minutes by its clock.
     final remaining = _endsAt.difference(DateTime.now()).inSeconds;
-    final unusedMinutes = remaining > 0 ? remaining ~/ 60 : 0;
-    if (unusedMinutes > 0) {
-      AppState.refundTime(unusedMinutes);
+    if (remaining > 0) {
+      ScreenTimeService.end(widget.sessionId);
     }
     super.dispose();
   }

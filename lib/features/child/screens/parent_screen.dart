@@ -1,10 +1,9 @@
 import 'dart:ui';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/services/screen_time_service.dart';
 import 'package:read_unlock_app/core/utils/screen_time_rules.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'child_insights_screen.dart';
@@ -23,6 +22,10 @@ class _ParentScreenState extends State<ParentScreen> {
   final Color primaryNeon = const Color(0xFF8B5CF6);
   final Color accentBlue = const Color(0xFF3B82F6);
   final Color glassCard = const Color(0xFF1E1E24).withOpacity(0.6);
+
+  // Live list of this parent's children (needs realtime on `children`).
+  final Stream<List<Map<String, dynamic>>> _childrenStream =
+      Children.watchMine();
 
   // 🪄 متد انتخاب فرزند
   Future<void> _selectChild(
@@ -162,12 +165,13 @@ class _ParentScreenState extends State<ParentScreen> {
     );
 
     if (confirm == true) {
-      await FirebaseFirestore.instance
-          .collection('parents')
-          .doc(FirebaseAuth.instance.currentUser?.uid)
-          .collection('children')
-          .doc(childId)
-          .delete();
+      try {
+        await AppState.deleteChild(childId);
+      } catch (e) {
+        debugPrint("Delete child error: $e");
+        _showProSnackBar("Couldn't delete. Try again.");
+        return;
+      }
       if (mounted) setState(() {});
     }
   }
@@ -207,7 +211,7 @@ class _ParentScreenState extends State<ParentScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final String? parentId = FirebaseAuth.instance.currentUser?.uid;
+    final String? parentId = Backend.uid;
 
     return Scaffold(
       backgroundColor: darkGalaxy,
@@ -318,12 +322,8 @@ class _ParentScreenState extends State<ParentScreen> {
                             style: TextStyle(color: Colors.white54),
                           ),
                         )
-                      : StreamBuilder<QuerySnapshot>(
-                          stream: FirebaseFirestore.instance
-                              .collection('parents')
-                              .doc(parentId)
-                              .collection('children')
-                              .snapshots(),
+                      : StreamBuilder<List<Map<String, dynamic>>>(
+                          stream: _childrenStream,
                           builder: (context, snapshot) {
                             if (snapshot.connectionState ==
                                 ConnectionState.waiting) {
@@ -333,8 +333,7 @@ class _ParentScreenState extends State<ParentScreen> {
                                 ),
                               );
                             }
-                            if (!snapshot.hasData ||
-                                snapshot.data!.docs.isEmpty) {
+                            if (!snapshot.hasData || snapshot.data!.isEmpty) {
                               return _buildProEmptyState();
                             }
 
@@ -344,11 +343,10 @@ class _ParentScreenState extends State<ParentScreen> {
                                 horizontal: 20,
                                 vertical: 10,
                               ),
-                              itemCount: snapshot.data!.docs.length,
+                              itemCount: snapshot.data!.length,
                               itemBuilder: (context, index) {
-                                final doc = snapshot.data!.docs[index];
-                                final data = doc.data() as Map<String, dynamic>;
-                                return _buildProChildCard(doc.id, data)
+                                final data = snapshot.data![index];
+                                return _buildProChildCard(data['id'], data)
                                     .animate()
                                     .fade(delay: (100 * index).ms)
                                     .slideX(begin: 0.1);
@@ -811,16 +809,11 @@ class _ParentScreenState extends State<ParentScreen> {
               onPressed: saving
                   ? null
                   : () async {
-                      final uid = FirebaseAuth.instance.currentUser?.uid;
-                      if (uid == null) return;
+                      if (!Backend.isSignedIn) return;
                       setStateDialog(() => saving = true);
                       try {
                         await ScreenTimeService.setDailyLimit(
-                          FirebaseFirestore.instance
-                              .collection('parents')
-                              .doc(uid)
-                              .collection('children')
-                              .doc(childId),
+                          childId,
                           selected,
                         );
                         if (dialogContext.mounted) {
@@ -988,29 +981,29 @@ class _ParentScreenState extends State<ParentScreen> {
                                 if (currentTime + addTime < 0) {
                                   addTime = -currentTime;
                                 }
-                                // Same per-change limits as firestore.rules
-                                // (max +500 XP and +120 min in one write).
+                                // Same per-change limits as the server
+                                // (max +500 XP and +120 min per gift).
                                 if (addXp > 500) addXp = 500;
                                 if (addTime > 120) addTime = 120;
 
                                 HapticFeedback.heavyImpact();
                                 Navigator.pop(context); // بستن دیالوگ
 
-                                // آپدیت مستقیم در فایربیس با مقادیر اصلاح شده
+                                // The server applies the gift (capped, never
+                                // below zero) and returns what it granted.
+                                int grantedXp;
+                                int grantedMinutes;
                                 try {
-                                  await FirebaseFirestore.instance
-                                      .collection('parents')
-                                      .doc(
-                                        FirebaseAuth.instance.currentUser?.uid,
-                                      )
-                                      .collection('children')
-                                      .doc(childId)
-                                      .update({
-                                        'xp': FieldValue.increment(addXp),
-                                        'timeBalance': FieldValue.increment(
-                                          addTime,
-                                        ),
-                                      });
+                                  final result = await Rewards.parentAdjust(
+                                    childId,
+                                    xp: addXp,
+                                    minutes: addTime,
+                                  );
+                                  grantedXp =
+                                      (result['xp'] as num?)?.toInt() ?? 0;
+                                  grantedMinutes =
+                                      (result['minutes'] as num?)?.toInt() ?? 0;
+                                  await AppState.refreshActiveChild();
                                 } catch (e) {
                                   debugPrint("Gift update error: $e");
                                   _showProSnackBar(
@@ -1020,8 +1013,11 @@ class _ParentScreenState extends State<ParentScreen> {
                                   return;
                                 }
 
+                                String signed(int v) => v > 0 ? '+$v' : '$v';
                                 _showProSnackBar(
-                                  "Success! $childName received the updates. 🎉",
+                                  "Success! $childName received the updates "
+                                  "(${signed(grantedXp)} XP, "
+                                  "${signed(grantedMinutes)} min). 🎉",
                                   isSuccess: true,
                                 );
                               },

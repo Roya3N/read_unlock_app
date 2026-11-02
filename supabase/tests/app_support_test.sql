@@ -27,5 +27,18 @@ select pg_temp.expect('sign-up saves name and date of birth',
   (select name || ' ' || dob from public.parents where email = 'c@test'), 'Mina 1990-04-05');
 select pg_temp.expect('bad date of birth does not block sign-up',
   (select coalesce(dob::text, 'none') from public.parents where email = 'd@test'), 'none');
+select pg_temp.expect('long age group label accepted',
+  pg_temp.try('authenticated', :'A', $$update public.children set age_group = 'Pre-teens (10-12 years)' where id = '$$ || :'CA' || $$'$$), 'ok:1');
+select pg_temp.expect('signed-out user cannot delete an account',
+  pg_temp.try('anon', null, 'select public.delete_my_account()'), 'denied');
+insert into public.reward_events (child_id, idempotency_key, source) values (:'CA', 'k-del', 'x');
+select pg_temp.val(:'A', 'select public.delete_my_account()::text');
+select pg_temp.expect('deleting my account removes me, my children and their data',
+  (select count(*) from auth.users where id = :'A') || ' ' ||
+  (select count(*) from public.parents where id = :'A') || ' ' ||
+  (select count(*) from public.children where id = :'CA') || ' ' ||
+  (select count(*) from public.reward_events where child_id = :'CA'), '0 0 0 0');
+select pg_temp.expect('other accounts are untouched',
+  (select count(*)::text from auth.users where id = :'B'), '1');
 rollback;
 \echo ALL APP SUPPORT TESTS PASSED

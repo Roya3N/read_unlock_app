@@ -1,27 +1,28 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-// Needs a real Firebase app (main.dart initializes Firebase), so it is
-// tagged and skipped in CI with --exclude-tags firebase.
-@Tags(['firebase'])
-library;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:read_unlock_app/main.dart';
 
 void main() {
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+    // Not a real project: network calls fail in tests, which the app
+    // must survive.
+    await Supabase.initialize(
+      url: 'https://example.supabase.co',
+      anonKey: 'test-anon-key',
+    );
+  });
+
   testWidgets('App starts without crashing', (WidgetTester tester) async {
     await tester.pumpWidget(const MyApp());
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1));
 
-    // We don't assert a specific screen here because initial route depends on
-    // persisted state (logged in or not). We only require that the app builds.
+    // The first screen depends on whether someone is signed in; we only
+    // require that the app builds.
     expect(find.byType(MaterialApp), findsOneWidget);
   });
 }

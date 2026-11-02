@@ -1,7 +1,7 @@
 import 'dart:ui'; // For Glassmorphism
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import '../data/avatars.dart';
 
@@ -15,6 +15,11 @@ class AvatarScreen extends StatefulWidget {
 class _AvatarScreenState extends State<AvatarScreen> {
   String? localSelected;
   bool isPurchasing = false;
+
+  final String _childId = AppState.activeChildId;
+  late final Stream<Map<String, dynamic>?>? _childStream = _childId.isEmpty
+      ? null
+      : Children.watch(_childId);
 
   Future<void> _handleAvatarTap(
     Map<String, dynamic> avatar,
@@ -53,11 +58,24 @@ class _AvatarScreenState extends State<AvatarScreen> {
       setState(() => isPurchasing = true);
 
       try {
-        // ⭐️ کسر XP و اضافه کردن آواتار مستقیماً در دیتابیس (دقیقاً مثل فروشگاه)
-        await AppState.currentChildRef?.update({
-          'xp': FieldValue.increment(-cost),
-          'unlockedAvatars': FieldValue.arrayUnion([id]),
-        });
+        // ⭐️ خرید روی سرور انجام می‌شود (قیمت و سطح را سرور چک می‌کند)
+        final result = await Rewards.buyAvatar(_childId, id);
+        await AppState.refreshActiveChild();
+
+        if (result['ok'] != true) {
+          if (mounted) {
+            setState(() => isPurchasing = false);
+            _showProSnackBar(
+              result['reason'] == 'level_too_low'
+                  ? "Reach Level $reqLevel to unlock this hero! 🏆"
+                  : "Not enough XP! Complete activities! 🔥",
+              result['reason'] == 'level_too_low'
+                  ? Colors.orangeAccent
+                  : const Color(0xFFF87171),
+            );
+          }
+          return;
+        }
 
         if (mounted) {
           setState(() {
@@ -128,15 +146,15 @@ class _AvatarScreenState extends State<AvatarScreen> {
           ),
 
           SafeArea(
-            child: AppState.currentChildRef == null
+            child: _childStream == null
                 ? const Center(
                     child: Text(
                       "Error: No active explorer found.",
                       style: TextStyle(color: Colors.redAccent),
                     ),
                   )
-                : StreamBuilder<DocumentSnapshot>(
-                    stream: AppState.currentChildRef!.snapshots(),
+                : StreamBuilder<Map<String, dynamic>?>(
+                    stream: _childStream,
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting)
                         return const Center(
@@ -144,7 +162,7 @@ class _AvatarScreenState extends State<AvatarScreen> {
                             color: Color(0xFF8B5CF6),
                           ),
                         );
-                      if (!snapshot.hasData || !snapshot.data!.exists)
+                      if (snapshot.data == null)
                         return const Center(
                           child: Text(
                             "Data not found.",
@@ -152,14 +170,16 @@ class _AvatarScreenState extends State<AvatarScreen> {
                           ),
                         );
 
-                      final data =
-                          snapshot.data!.data() as Map<String, dynamic>;
+                      final data = snapshot.data!;
                       final int xp = data['xp'] ?? 0;
                       final int currentLevel = (xp ~/ 100) + 1;
                       final int timeBalance = data['timeBalance'] ?? 0;
-                      final List<String> unlockedAvatars = List<String>.from(
-                        data['unlockedAvatars'] ?? ['boy1'],
+                      final List<String> owned = List<String>.from(
+                        data['unlockedAvatars'] ?? const <String>[],
                       );
+                      final List<String> unlockedAvatars = owned.isEmpty
+                          ? ['boy1']
+                          : owned;
                       final String dbSelected = data['avatar'] ?? 'boy1';
                       final String actualSelected = localSelected ?? dbSelected;
 
@@ -566,9 +586,12 @@ class _AvatarScreenState extends State<AvatarScreen> {
                   if (localSelected != null) {
                     AppState.avatar = localSelected!;
                     await AppState.save();
-                    await AppState.currentChildRef?.update({
-                      'avatar': localSelected,
-                    });
+                    if (_childId.isNotEmpty) {
+                      await Children.updateProfile(
+                        _childId,
+                        avatar: localSelected,
+                      );
+                    }
                   }
                   if (mounted) Navigator.pop(context);
                 },
