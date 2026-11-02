@@ -1,0 +1,265 @@
+rules_version = '2';
+
+// Firestore security rules for Read & Unlock.
+//
+// Data model (as used by lib/):
+//   parents/{uid}                                   parent profile (owner = uid)
+//   parents/{uid}/children/{childId}                child profile + rewards
+//   parents/{uid}/children/{childId}/daily_activity/{yyyy-MM-dd}
+//   parents/{uid}/children/{childId}/letters/{LETTER}
+//   config/{app_settings|economy|global}            read before login, admin writes
+//   books/{bookId}, game_settings/{docId}           public read (guest mode), admin writes
+//   system_logs/{logId}                             append-only, admin reads
+//
+// IMPORTANT: the reward checks below are a mitigation, not anti-cheat. The
+// client still writes its own rewards, so a signed-in user can repeat small
+// valid writes. Real protection needs a server (Cloud Function) to grant rewards.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Same email the app checks in dashboard_screen.dart, plus a verified email
+    // so nobody can sign up with that address without owning the inbox.
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email == 'roya3n@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    // Largest single legitimate increase found in lib/ (see report):
+    //   timeBalance: shop buys up to 120 minutes in one write (shop_screen.dart:555,771)
+    //   xp: largest fixed reward is 100 (math levels); books add xpReward + 2/answer.
+    function maxTimeUp() { return 120; }
+    function maxXpUp() { return 500; }
+
+    // An int reward field. `before` is {} on create. A field that is not
+    // changed by this write is always accepted (so legacy data does not block
+    // unrelated writes). If changed it must be an int >= 0 and must not rise by
+    // more than maxUp. If it existed before, it cannot be removed.
+    function rewardIntOk(before, after, f, maxUp, mayDecrease) {
+      return (f in after)
+        ? (
+            (f in before && after[f] == before[f])
+            || (
+              after[f] is int
+              && after[f] >= 0
+              && after[f] - before.get(f, 0) <= maxUp
+              && (mayDecrease || after[f] >= before.get(f, 0))
+            )
+          )
+        : !(f in before);
+    }
+
+    // A list the app only ever grows with arrayUnion. It cannot be removed or
+    // shrunk (stops re-earning a book by removing it from readBooksHistory).
+    function listKept(before, after, f, maxSize) {
+      return (f in after)
+        ? (after[f] is list
+           && after[f].size() <= maxSize
+           && (!(f in before) || after[f].hasAll(before[f])))
+        : !(f in before);
+    }
+
+    function optString(after, f, maxLen) {
+      return !(f in after) || (after[f] is string && after[f].size() <= maxLen);
+    }
+
+    function childDataOk(before, after) {
+      return rewardIntOk(before, after, 'xp', maxXpUp(), true)
+        && rewardIntOk(before, after, 'timeBalance', maxTimeUp(), true)
+        && rewardIntOk(before, after, 'totalEarnedTime', maxTimeUp(), false)
+        && listKept(before, after, 'readBooksHistory', 5000)
+        && listKept(before, after, 'unlockedAvatars', 500)
+        && listKept(before, after, 'unlockedCards', 500)
+        && listKept(before, after, 'learnedWords', 10000)
+        && optString(after, 'name', 100)
+        && optString(after, 'avatar', 200)
+        && optString(after, 'avatarUrl', 500)
+        && optString(after, 'ageGroup', 100)
+        && optString(after, 'lastBookReadId', 200)
+        && (!('level' in after) || (after.level is int && after.level >= 0))
+        && (!('records' in after) || after.records is map);
+    }
+
+    // Every field the client writes on a child doc today. A new field needs
+    // to be added here first.
+    function childFields() {
+      return [
+        'id', 'name', 'xp', 'level', 'avatar', 'avatarUrl', 'ageGroup',
+        'createdAt', 'timeBalance', 'totalEarnedTime', 'learnedWords',
+        'unlockedAvatars', 'unlockedCards', 'readBooksHistory',
+        'lastBookReadId', 'lastReadTimestamp', 'records'
+      ];
+    }
+
+    // ---------- parents ----------
+
+    match /parents/{parentId} {
+      function parentDataOk() {
+        let d = request.resource.data;
+        return (!('role' in d) || d.role == 'parent')
+          && (!('uid' in d) || d.uid == parentId);
+      }
+
+      allow read: if isOwner(parentId);
+      allow create, update: if isOwner(parentId) && parentDataOk();
+      // Account deletion (settings_screen.dart) deletes the parent doc.
+      allow delete: if isOwner(parentId);
+
+      match /children/{childId} {
+        allow read: if isOwner(parentId) || isAdmin();
+
+        allow create: if isOwner(parentId)
+          && request.resource.data.keys().hasOnly(childFields())
+          && childDataOk({}, request.resource.data);
+
+        allow update: if (
+            isOwner(parentId)
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(childFields())
+            && childDataOk(resource.data, request.resource.data)
+          ) || (
+            // admin_users_screen.dart sets absolute xp / timeBalance.
+            isAdmin()
+            && request.resource.data.xp is int && request.resource.data.xp >= 0
+            && request.resource.data.timeBalance is int
+            && request.resource.data.timeBalance >= 0
+          );
+
+        // parent_screen.dart, app_state.dart deleteChild, settings_screen.dart.
+        allow delete: if isOwner(parentId);
+
+        match /daily_activity/{day} {
+          function activityOk() {
+            let d = request.resource.data;
+            let before = resource == null ? {} : resource.data;
+            return d.keys().hasOnly(['date', 'minutes', 'breakdown'])
+              && (!('date' in d) || d.date == day)
+              && (!('minutes' in d) || (
+                    d.minutes is int && d.minutes >= 0
+                    && d.minutes - before.get('minutes', 0) <= 1440))
+              && (!('breakdown' in d) || d.breakdown is map);
+          }
+
+          allow read: if isOwner(parentId) || isAdmin();
+          allow create, update: if isOwner(parentId) && activityOk();
+          allow delete: if isOwner(parentId);
+        }
+
+        match /letters/{letter} {
+          allow read: if isOwner(parentId) || isAdmin();
+          allow create, update: if isOwner(parentId)
+            && request.resource.data.keys().hasOnly(['level', 'lastUpdated'])
+            && request.resource.data.level is int
+            && request.resource.data.level >= 0
+            && request.resource.data.level <= 3;
+          allow delete: if isOwner(parentId);
+        }
+      }
+    }
+
+    // Collection group queries over every family's children.
+    // Admin only: admin_users_screen.dart. The leaderboard now reads the
+    // public `leaderboard` collection instead, because this query exposed
+    // every child's full profile to any signed-in user.
+    match /{path=**}/children/{childId} {
+      allow read: if isAdmin();
+    }
+
+    // Public leaderboard: first name, avatar and XP only
+    // (lib/core/services/leaderboard_service.dart). XP must equal the real
+    // child doc's XP, so this entry cannot be inflated on its own.
+    match /leaderboard/{childId} {
+      function childPath() {
+        return /databases/$(database)/documents/parents/$(request.auth.uid)/children/$(childId);
+      }
+      function entryOk() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['parentId', 'name', 'avatar', 'xp', 'updatedAt'])
+          && d.parentId == request.auth.uid
+          && d.name is string && d.name.size() <= 20
+          && d.avatar is string && d.avatar.size() <= 200
+          && d.xp is int && d.xp >= 0
+          && d.updatedAt == request.time
+          && exists(childPath())
+          && d.xp == get(childPath()).data.get('xp', 0);
+      }
+
+      allow read: if signedIn();
+      allow create: if signedIn() && entryOk();
+      allow update: if signedIn()
+        && resource.data.parentId == request.auth.uid
+        && entryOk();
+      allow delete: if isAdmin()
+        || (signedIn() && resource.data.parentId == request.auth.uid);
+    }
+
+    // ---------- shared content ----------
+
+    // config/app_settings is read at app start (main.dart) and config/economy
+    // on the login screen, both before sign-in, so reads are public.
+    match /config/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Guest mode ("Try as Guest") reads books and scramble words without
+    // signing in, so reads are public.
+    match /books/{bookId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /game_settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---------- logs ----------
+
+    match /system_logs/{logId} {
+      function logShapeOk(maxLen) {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['type', 'message', 'user', 'timestamp'])
+          && d.keys().hasAll(['type', 'message', 'user', 'timestamp'])
+          && d.type in ['error', 'warning', 'info']
+          && d.message is string && d.message.size() <= maxLen
+          && d.timestamp == request.time;
+      }
+
+      allow read, delete: if isAdmin();
+
+      allow create: if
+        // Signed-in user: must log under their own email.
+        (signedIn()
+          && logShapeOk(2000)
+          && request.resource.data.user == request.auth.token.email)
+        // Before sign-in: login_screen.dart logs a blocked maintenance login
+        // (warning) and a failed config read (error) before signIn(). Remove
+        // this branch to require sign-in for every log (those two logs will
+        // then be dropped silently by AppLogger's catch).
+        || (!signedIn()
+          && logShapeOk(500)
+          && request.resource.data.type in ['error', 'warning']
+          && request.resource.data.user == 'Guest / Not Logged In');
+
+      allow update: if false;
+    }
+
+    // ---------- everything else ----------
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

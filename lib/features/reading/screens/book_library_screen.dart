@@ -540,6 +540,7 @@ class _BookLibraryScreenState extends State<BookLibraryScreen> {
           context,
           MaterialPageRoute(
             builder: (context) => ReadingScreen(
+              bookId: book.id,
               pages: book.pages,
               pageTexts: book.pageTexts,
               title: book.title,

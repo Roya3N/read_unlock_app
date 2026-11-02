@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/book_model.dart';
+import 'package:read_unlock_app/core/utils/book_reward.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 
 class ReadingController extends ChangeNotifier {
@@ -21,7 +22,6 @@ class ReadingController extends ChangeNotifier {
 
   // === متغیرهای ضد تقلب ===
   Book? currentReadingBook;
-  DateTime? _bookStartTime;
 
   // ==========================================
   // ۱. راه‌اندازی و فیلترها
@@ -101,77 +101,83 @@ class ReadingController extends ChangeNotifier {
   // ==========================================
   void startReadingBook(Book book) {
     currentReadingBook = book;
-    _bookStartTime = DateTime.now(); // ثبت زمان شروع
     notifyListeners();
   }
 
-  Future<bool> finalizeBookAndClaimRewards({
+  /// Gives the reward for finishing a book in one transaction, so the
+  /// "too fast" and "already read" checks always apply.
+  Future<BookRewardDecision> claimBookReward({
+    required String bookId,
+    required int pageCount,
+    required DateTime startedAt,
+    required int xpReward,
+    required int timeReward,
     required int correctQuizAnswers,
-    required int totalQuizQuestions,
   }) async {
-    if (currentReadingBook == null || _bookStartTime == null) return false;
-
-    // بررسی سرعتِ خواندن
-    final now = DateTime.now();
-    final timeSpentInSeconds = now.difference(_bookStartTime!).inSeconds;
-    final minRequiredTime =
-        currentReadingBook!.pages.length * 5; // هر صفحه ۵ ثانیه
-
-    if (timeSpentInSeconds < minRequiredTime) {
-      errorMessage = "You read too fast! Take your time to earn rewards. 🐢";
-      return false;
+    final user = _auth.currentUser;
+    if (user == null || AppState.activeChildId.isEmpty) {
+      return const BookRewardDecision.rejected(
+        "Please sign in to save rewards.",
+      );
     }
 
+    final secondsSpent = DateTime.now().difference(startedAt).inSeconds;
+
+    final childRef = _db
+        .collection('parents')
+        .doc(user.uid)
+        .collection('children')
+        .doc(AppState.activeChildId);
+
     try {
-      final user = _auth.currentUser;
-      if (user == null || AppState.activeChildId.isEmpty) return false;
-
-      final childRef = _db
-          .collection('parents')
-          .doc(user.uid)
-          .collection('children')
-          .doc(AppState.activeChildId);
-
-      final success = await _db.runTransaction<bool>((transaction) async {
+      final decision = await _db.runTransaction<BookRewardDecision>((
+        transaction,
+      ) async {
         final childSnapshot = await transaction.get(childRef);
-        if (!childSnapshot.exists) return false;
-
-        final childData = childSnapshot.data() as Map<String, dynamic>;
-        int currentXp = childData['xp'] ?? 0;
-        int currentTimeBalance = childData['timeBalance'] ?? 0;
-        List<dynamic> readBooks = childData['readBooksHistory'] ?? [];
-
-        // اگر قبلا خونده باشه فقط ۱ امتیاز میده
-        if (readBooks.contains(currentReadingBook!.id)) {
-          currentXp += 1;
-        } else {
-          int performanceBonus = (correctQuizAnswers * 2);
-          currentXp += currentReadingBook!.xpReward + performanceBonus;
-          currentTimeBalance += currentReadingBook!.timeReward;
-          readBooks.add(currentReadingBook!.id);
+        if (!childSnapshot.exists) {
+          return const BookRewardDecision.rejected("Child profile not found.");
         }
 
-        transaction.update(childRef, {
-          'xp': currentXp,
-          'timeBalance': currentTimeBalance,
-          'readBooksHistory': readBooks,
-          'lastBookReadId': currentReadingBook!.id,
-          'lastReadTimestamp': FieldValue.serverTimestamp(),
-        });
+        final childData = childSnapshot.data() as Map<String, dynamic>;
+        final readBooks = List<dynamic>.from(
+          childData['readBooksHistory'] ?? const [],
+        );
 
-        AppState.timeBalance = currentTimeBalance;
-        return true;
+        final decision = BookRewardRules.decide(
+          alreadyRead: readBooks.contains(bookId),
+          secondsSpent: secondsSpent,
+          pageCount: pageCount,
+          xpReward: xpReward,
+          timeReward: timeReward,
+          correctAnswers: correctQuizAnswers,
+        );
+        if (!decision.granted) return decision;
+
+        final updates = <String, dynamic>{
+          'xp': FieldValue.increment(decision.xp),
+          'lastBookReadId': bookId,
+          'lastReadTimestamp': FieldValue.serverTimestamp(),
+        };
+        if (decision.firstRead) {
+          updates['readBooksHistory'] = FieldValue.arrayUnion([bookId]);
+        }
+        if (decision.minutes > 0) {
+          updates['timeBalance'] = FieldValue.increment(decision.minutes);
+          updates['totalEarnedTime'] = FieldValue.increment(decision.minutes);
+        }
+        transaction.update(childRef, updates);
+        return decision;
       });
 
-      if (success) {
-        currentReadingBook = null;
-        _bookStartTime = null;
-        return true;
+      if (decision.granted && decision.minutes > 0) {
+        AppState.timeBalance += decision.minutes;
+        AppState.totalEarnedTime += decision.minutes;
+        await AppState.save();
       }
-      return false;
+      return decision;
     } catch (e) {
-      errorMessage = "Error saving your rewards!";
-      return false;
+      debugPrint("Book reward error: $e");
+      return const BookRewardDecision.rejected("Error saving your rewards!");
     }
   }
 }

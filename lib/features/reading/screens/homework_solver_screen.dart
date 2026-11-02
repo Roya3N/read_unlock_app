@@ -3,8 +3,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:read_unlock_app/core/utils/progress_service.dart';
-// ignore: deprecated_member_use, avoid_web_libraries_in_flutter
-import 'dart:html' as html;
 
 enum ToolType { pan, pen, pencil, highlighter, straightLine, eraser }
 
@@ -521,11 +519,6 @@ class _HomeworkSolverScreenState extends State<HomeworkSolverScreen>
             backgroundColor: Colors.green.shade800,
           ),
         );
-
-        final bytes = Uint8List.fromList([0]);
-        final blob = html.Blob([bytes]);
-        final url = html.Url.createObjectUrlFromBlob(blob);
-        html.Url.revokeObjectUrl(url);
       }
     });
   }

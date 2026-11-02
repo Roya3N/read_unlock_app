@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:read_unlock_app/core/utils/app_state.dart';
 
 class TimerScreen extends StatefulWidget {
   final int minutes;
@@ -14,18 +15,24 @@ class _TimerScreenState extends State<TimerScreen> {
   late int totalSeconds;
   late int secondsLeft;
   Timer? timer;
+  late DateTime _endsAt;
 
   @override
   void initState() {
     super.initState();
     totalSeconds = widget.minutes * 60;
     secondsLeft = totalSeconds;
+    // Count against the clock, so the timer stays correct even if the app
+    // is paused in the background.
+    _endsAt = DateTime.now().add(Duration(seconds: totalSeconds));
 
     timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (secondsLeft > 0) {
-        setState(() => secondsLeft--);
+      final remaining = _endsAt.difference(DateTime.now()).inSeconds;
+      if (remaining > 0) {
+        setState(() => secondsLeft = remaining);
       } else {
         timer.cancel();
+        setState(() => secondsLeft = 0);
         _showTimeUpDialog();
       }
     });
@@ -34,6 +41,13 @@ class _TimerScreenState extends State<TimerScreen> {
   @override
   void dispose() {
     timer?.cancel();
+    // Minutes were taken up front; give back whole minutes not used when
+    // the session ends early.
+    final remaining = _endsAt.difference(DateTime.now()).inSeconds;
+    final unusedMinutes = remaining > 0 ? remaining ~/ 60 : 0;
+    if (unusedMinutes > 0) {
+      AppState.refundTime(unusedMinutes);
+    }
     super.dispose();
   }
 

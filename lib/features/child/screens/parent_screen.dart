@@ -889,22 +889,37 @@ class _ParentScreenState extends State<ParentScreen> {
                                 if (currentTime + addTime < 0) {
                                   addTime = -currentTime;
                                 }
+                                // Same per-change limits as firestore.rules
+                                // (max +500 XP and +120 min in one write).
+                                if (addXp > 500) addXp = 500;
+                                if (addTime > 120) addTime = 120;
 
                                 HapticFeedback.heavyImpact();
                                 Navigator.pop(context); // بستن دیالوگ
 
                                 // آپدیت مستقیم در فایربیس با مقادیر اصلاح شده
-                                await FirebaseFirestore.instance
-                                    .collection('parents')
-                                    .doc(FirebaseAuth.instance.currentUser?.uid)
-                                    .collection('children')
-                                    .doc(childId)
-                                    .update({
-                                      'xp': FieldValue.increment(addXp),
-                                      'timeBalance': FieldValue.increment(
-                                        addTime,
-                                      ),
-                                    });
+                                try {
+                                  await FirebaseFirestore.instance
+                                      .collection('parents')
+                                      .doc(
+                                        FirebaseAuth.instance.currentUser?.uid,
+                                      )
+                                      .collection('children')
+                                      .doc(childId)
+                                      .update({
+                                        'xp': FieldValue.increment(addXp),
+                                        'timeBalance': FieldValue.increment(
+                                          addTime,
+                                        ),
+                                      });
+                                } catch (e) {
+                                  debugPrint("Gift update error: $e");
+                                  _showProSnackBar(
+                                    "Couldn't save the change. Try again.",
+                                    isSuccess: false,
+                                  );
+                                  return;
+                                }
 
                                 _showProSnackBar(
                                   "Success! $childName received the updates. 🎉",
