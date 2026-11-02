@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:read_unlock_app/core/services/leaderboard_service.dart';
+import 'package:read_unlock_app/core/services/screen_time_service.dart';
 
 class LevelRewards {
   static const Map<int, String> rewards = {
@@ -124,6 +125,7 @@ class AppState {
       await currentChildRef?.update({
         'timeBalance': FieldValue.increment(minutes),
       });
+      await ScreenTimeService.recordUsed(-minutes);
     } catch (e) {
       debugPrint("Error refunding time: $e");
     }
