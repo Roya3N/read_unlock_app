@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/progress_service.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/features/engagement/screens/letter_tracing_screen.dart';
@@ -44,29 +43,25 @@ class _LetterJourneyScreenState extends State<LetterJourneyScreen> {
   // 📡 خواندن اطلاعات از دیتابیس
   Future<void> _loadUserProgress() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null && AppState.activeChildId.isNotEmpty) {
-        final doc = await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(user.uid)
-            .collection('children')
-            .doc(AppState.activeChildId)
-            .collection('letters')
-            .doc(widget.letter.toUpperCase())
-            .get();
-
-        if (doc.exists && doc.data() != null) {
+      if (Backend.isSignedIn && AppState.activeChildId.isNotEmpty) {
+        final level = await Children.letterLevel(
+          AppState.activeChildId,
+          widget.letter,
+        );
+        if (mounted) {
           setState(() {
-            currentLevel = doc.data()!['level'] ?? 0;
+            currentLevel = level;
           });
         }
       }
     } catch (e) {
       debugPrint("Error loading progress: $e");
     } finally {
-      setState(() {
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
     }
   }
 
@@ -78,19 +73,12 @@ class _LetterJourneyScreenState extends State<LetterJourneyScreen> {
       });
 
       try {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user != null && AppState.activeChildId.isNotEmpty) {
-          await FirebaseFirestore.instance
-              .collection('parents')
-              .doc(user.uid)
-              .collection('children')
-              .doc(AppState.activeChildId)
-              .collection('letters')
-              .doc(widget.letter.toUpperCase())
-              .set({
-                'level': currentLevel,
-                'lastUpdated': FieldValue.serverTimestamp(),
-              }, SetOptions(merge: true));
+        if (Backend.isSignedIn && AppState.activeChildId.isNotEmpty) {
+          await Children.saveLetterLevel(
+            AppState.activeChildId,
+            widget.letter,
+            currentLevel,
+          );
         }
       } catch (e) {
         debugPrint("Error saving progress: $e");
@@ -137,47 +125,33 @@ class _LetterJourneyScreenState extends State<LetterJourneyScreen> {
     int timeSpent =
         5; // ⏱️ فرض می‌کنیم کل پروسه نقاشی و بازی حدود ۵ دقیقه طول کشیده
 
-    _showProRewardPopup(bigXp + 2, bigTime);
+    if (!Backend.isSignedIn || AppState.activeChildId.isEmpty) {
+      _showProRewardPopup(bigXp + 2, bigTime);
+      return;
+    }
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null && AppState.activeChildId.isNotEmpty) {
-        // ۱. آپدیت زمان (Time Balance) و باز کردن کارت توی آلبوم 🃏
-        await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(user.uid)
-            .collection('children')
-            .doc(AppState.activeChildId)
-            .update({
-              'timeBalance': FieldValue.increment(bigTime),
-              'unlockedCards': FieldValue.arrayUnion([
-                widget.letter.toUpperCase(),
-              ]),
-            });
+      // ۱. جایزه حرف (XP، زمان و کارت آلبوم 🃏) فقط یک بار و توسط سرور داده می‌شود
+      final result = await Rewards.completeLetter(
+        AppState.activeChildId,
+        widget.letter,
+      );
+      final granted = result['granted'] == true;
+      final xp = granted && result['xp'] is int ? result['xp'] as int : 0;
+      final minutes =
+          granted && result['minutes'] is int ? result['minutes'] as int : 0;
 
-        AppState.timeBalance += bigTime;
-        await AppState.save();
+      // ۲. 🌟 ثبت زمان یادگیری برای نمودار داشبورد (بدون XP)
+      await ProgressService.logActivity(
+        xpEarned: 0,
+        playedMinutes: timeSpent,
+        activityName: 'letter_journey',
+      );
+      await AppState.refreshActiveChild();
 
-        // ۲. 🌟 ارسال XP و زمان بازی به مرکز فرماندهی برای نمودار داشبورد
-        ProgressService.logActivity(xpEarned: bigXp, playedMinutes: timeSpent);
-
-        if (mounted) {
-          setState(() => currentLevel = 3);
-        }
-
-        // ۳. آپدیت لول حرف تا دیگه جایزه تکراری نده
-        await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(user.uid)
-            .collection('children')
-            .doc(AppState.activeChildId)
-            .collection('letters')
-            .doc(widget.letter.toUpperCase())
-            .set({
-              'level': 3,
-              'lastUpdated': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
-      }
+      if (!mounted) return;
+      setState(() => currentLevel = 3);
+      _showProRewardPopup(xp, minutes);
     } catch (e) {
       debugPrint("Error claiming mega reward: $e");
     }

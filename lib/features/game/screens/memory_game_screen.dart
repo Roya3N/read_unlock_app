@@ -2,8 +2,6 @@ import 'dart:async';
 import 'dart:ui'; // برای Glassmorphism
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:read_unlock_app/core/services/audio_service.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
@@ -127,21 +125,15 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
       if (actualMinutes < 1) actualMinutes = 1; // حداقل ۱ دقیقه ثبت بشه
 
       if (AppState.activeChildId.isNotEmpty) {
-        // آپدیت تایم بالانس (جایزه)
-        await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(FirebaseAuth.instance.currentUser?.uid)
-            .collection('children')
-            .doc(AppState.activeChildId)
-            .update({'timeBalance': FieldValue.increment(earnedTime)});
-        AppState.timeBalance += earnedTime;
-
         // 🌟 ارسال زمان واقعی و اسم بازی به داشبورد
-        ProgressService.logActivity(
+        // The server caps game XP and games never give screen minutes,
+        // so the popup shows what the server granted.
+        earnedXp = await ProgressService.logActivity(
           xpEarned: earnedXp,
           playedMinutes: actualMinutes,
           activityName: 'memory', // 👈 حتماً memory باشه
         );
+        earnedTime = 0;
       }
 
       AudioService.playReward();

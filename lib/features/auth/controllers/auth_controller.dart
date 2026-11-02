@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/services/secure_storage_service.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 
@@ -33,17 +32,16 @@ class AuthController extends ChangeNotifier {
     bool hasPin = await SecureStorageService.hasParentPin();
 
     if (!hasPin) {
-      // تلاش برای دانلود از فایربیس
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
+      final uid = Backend.uid;
+      if (uid != null) {
         try {
-          final doc = await FirebaseFirestore.instance
-              .collection('parents')
-              .doc(user.uid)
-              .get();
-          if (doc.exists && doc.data()!.containsKey('parentPinHash')) {
-            // فرض می‌کنیم در دیتابیس هم هش شده ذخیره می‌شود
-            String downloadedHash = doc.data()!['parentPinHash'];
+          final row = await Backend.db
+              .from('parents')
+              .select('pin_hash')
+              .eq('id', uid)
+              .maybeSingle();
+          final downloadedHash = row?['pin_hash'];
+          if (downloadedHash is String && downloadedHash.isNotEmpty) {
             await SecureStorageService.saveRawHash(downloadedHash);
             hasPin = true;
           }
@@ -72,16 +70,13 @@ class AuthController extends ChangeNotifier {
       // 🔒 ذخیره رمز جدید (هش شده)
       await SecureStorageService.saveParentPin(inputPin);
 
-      // ☁️ سینک با فایربیس (ذخیره هش)
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        String hash = SecureStorageService.hashPin(
-          inputPin,
-        ); // از متد هش استفاده کن
-        await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(user.uid)
-            .set({'parentPinHash': hash}, SetOptions(merge: true));
+      final uid = Backend.uid;
+      if (uid != null) {
+        final hash = SecureStorageService.hashPin(inputPin);
+        await Backend.db
+            .from('parents')
+            .update({'pin_hash': hash})
+            .eq('id', uid);
       }
       return true;
     } else {
@@ -160,25 +155,24 @@ class AuthController extends ChangeNotifier {
       // ۱. 🔐 ذخیره پین‌کد به صورت هش شده در گاوصندوق
       await SecureStorageService.saveParentPin(pin);
 
-      // ۲. ☁️ سینک با فایربیس (اگر کاربر لاگین باشه)
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        String hash = SecureStorageService.hashPin(pin);
-        await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(user.uid)
-            .set({
-              'parentName': parentName,
-              'parentPinHash': hash,
-              'setupCompleted': true,
-            }, SetOptions(merge: true));
+      final uid = Backend.uid;
+      if (uid != null) {
+        final hash = SecureStorageService.hashPin(pin);
+        await Backend.db
+            .from('parents')
+            .update({
+              'name': parentName,
+              'pin_hash': hash,
+              'setup_completed': true,
+            })
+            .eq('id', uid);
       }
 
       // ۳. آپدیت وضعیت‌های لوکال
       AppState.userName = parentName;
       AppState.role = 'parent';
       AppState.children = [];
-      AppState.addChild(childName);
+      await AppState.addChild(childName, ageGroupValue: ageGroup);
       AppState.ageGroup = ageGroup;
       AppState.isLoggedIn = true;
       await AppState.save();

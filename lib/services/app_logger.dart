@@ -1,44 +1,35 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 
 class AppLogger {
-  // متد اصلی فرستادن لاگ به دیتابیس
+  /// Sends a log line to `system_logs` (signed-in users only; admins read
+  /// them in the admin logs screen).
   static Future<void> _sendLog({
     required String type, // 'error', 'warning', 'info'
     required String message,
   }) async {
+    debugPrint("[${type.toUpperCase()}] $message");
+    if (!Backend.isSignedIn) return;
     try {
-      // پیدا کردن کاربری که ارور براش رخ داده
-      final user = FirebaseAuth.instance.currentUser;
-      final userIdentifier = user?.email ?? 'Guest / Not Logged In';
-
-      await FirebaseFirestore.instance.collection('system_logs').add({
-        'type': type,
-        'message': message,
-        'user': userIdentifier,
-        'timestamp': FieldValue.serverTimestamp(),
+      await Backend.db.from('system_logs').insert({
+        'level': type,
+        'message': message.length > 2000 ? message.substring(0, 2000) : message,
+        'context': {'email': Backend.currentUser?.email},
       });
-
-      // تو کنسول خودت هم چاپش می‌کنیم که موقع برنامه‌نویسی ببینیش
-      debugPrint("[$type.toUpperCase()] $message");
     } catch (e) {
-      debugPrint("🚨 Failed to send log to Firebase: $e");
+      debugPrint("Failed to send log: $e");
     }
   }
 
-  // 🔴 برای ثبت ارورهای خطرناک (مثلاً قطع شدن دیتابیس)
   static Future<void> error(String message, [dynamic error]) async {
     final fullMessage = error != null ? "$message | Details: $error" : message;
     await _sendLog(type: 'error', message: fullMessage);
   }
 
-  // 🟠 برای ثبت هشدارهای مشکوک (مثلاً کاربری که قصد هک داره)
   static Future<void> warning(String message) async {
     await _sendLog(type: 'warning', message: message);
   }
 
-  // 🔵 برای ثبت اتفاقات مهم ولی عادی (مثلاً یه اکانت جدید ساخته شد)
   static Future<void> info(String message) async {
     await _sendLog(type: 'info', message: message);
   }

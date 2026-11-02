@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:math';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
@@ -16,7 +15,6 @@ class StickerAlbumScreen extends StatelessWidget {
       26,
       (index) => String.fromCharCode(65 + index),
     );
-    final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D17),
@@ -50,13 +48,10 @@ class StickerAlbumScreen extends StatelessWidget {
           ),
 
           // ⭐️ وصل شدیم به فایربیس تا زنده چک کنه کدوم کارت‌ها باز شدن
-          StreamBuilder<DocumentSnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('parents')
-                .doc(user?.uid)
-                .collection('children')
-                .doc(AppState.activeChildId)
-                .snapshots(),
+          StreamBuilder<Map<String, dynamic>?>(
+            stream: AppState.activeChildId.isEmpty
+                ? Stream<Map<String, dynamic>?>.value(null)
+                : Children.watch(AppState.activeChildId),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(
@@ -65,7 +60,7 @@ class StickerAlbumScreen extends StatelessWidget {
               }
 
               // گرفتن لیست کارت‌های باز شده از دیتابیس (اگر خالی بود، یه لیست خالی میده)
-              var data = snapshot.data?.data() as Map<String, dynamic>?;
+              var data = snapshot.data;
               List<dynamic> unlockedCards =
                   data != null && data.containsKey('unlockedCards')
                   ? data['unlockedCards']

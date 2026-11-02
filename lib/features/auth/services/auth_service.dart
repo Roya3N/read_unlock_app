@@ -1,11 +1,10 @@
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/services/secure_storage_service.dart'; // 👈 گاوصندوق اضافه شد
 
 class AuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  GoTrueClient get _auth => Backend.db.auth;
 
   static const int _maxFailedAttempts = 5;
   static const int _lockoutDurationSeconds = 30;
@@ -20,39 +19,26 @@ class AuthService {
     required String dob,
   }) async {
     try {
-      UserCredential result = await _auth.createUserWithEmailAndPassword(
+      // The parent row is created by a database trigger from this metadata.
+      // Supabase sends the confirmation email itself.
+      await _auth.signUp(
         email: email,
         password: password,
+        data: {'name': name, 'dob': _isoDate(dob)},
       );
-
-      User? user = result.user;
-
-      if (user != null) {
-        try {
-          await user.sendEmailVerification();
-          debugPrint("✅ Verification email sent to: $email");
-        } catch (emailError) {
-          debugPrint("❌ Failed to send email: $emailError");
-        }
-
-        // ذخیره اطلاعات والدین در دیتابیس
-        await _db.collection('parents').doc(user.uid).set({
-          'uid': user.uid,
-          'name': name,
-          'email': email,
-          'dob': dob,
-          'createdAt': FieldValue.serverTimestamp(),
-          'role': 'parent',
-        });
-
-        return null; // یعنی خطایی وجود ندارد
-      }
-    } on FirebaseAuthException catch (e) {
+      return null;
+    } on AuthException catch (e) {
       return e.message;
     } catch (e) {
       return e.toString();
     }
-    return "An unknown error occurred.";
+  }
+
+  /// "2015/3/7" -> "2015-03-07"; anything else -> null.
+  static String? _isoDate(String text) {
+    final m = RegExp(r'^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$').firstMatch(text);
+    if (m == null) return null;
+    return '${m[1]}-${m[2]!.padLeft(2, '0')}-${m[3]!.padLeft(2, '0')}';
   }
 
   // ==========================================
@@ -76,13 +62,12 @@ class AuthService {
     }
 
     try {
-      // تلاش برای ورود به فایربیس
-      await _auth.signInWithEmailAndPassword(email: email, password: password);
+      await _auth.signInWithPassword(email: email, password: password);
 
       // ✅ موفقیت‌آمیز بود: ریست کردن خطاهای امنیتی
       await SecureStorageService.resetLockout();
       return null;
-    } on FirebaseAuthException catch (e) {
+    } on AuthException catch (e) {
       // ❌ ورود ناموفق: افزایش کنتور اشتباهات
       failedAttempts++;
 
@@ -96,7 +81,7 @@ class AuthService {
       } else {
         await SecureStorageService.saveFailedAttempts(failedAttempts);
       }
-      return e.message; // نمایش ارور فایربیس (مثلاً رمز اشتباه است)
+      return e.message;
     }
   }
 
@@ -104,7 +89,7 @@ class AuthService {
   // 3. Reset Password
   // ==========================================
   Future<void> resetPassword(String email) async {
-    await _auth.sendPasswordResetEmail(email: email);
+    await _auth.resetPasswordForEmail(email);
   }
 
   // ==========================================

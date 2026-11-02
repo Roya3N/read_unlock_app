@@ -1,11 +1,10 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/core/utils/progress_service.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 
 class WordScrambleScreen extends StatefulWidget {
   const WordScrambleScreen({super.key});
@@ -38,6 +37,7 @@ class _WordScrambleScreenState extends State<WordScrambleScreen> {
   int combo = 0;
   int totalSeconds = 0;
   Timer? _timer;
+  bool _claiming = false; // one claim per session, even on a double tap
 
   final Color greenColor = const Color(0xFF4ADE80);
   final Color yellowColor = const Color(0xFFFBBF24);
@@ -47,19 +47,16 @@ class _WordScrambleScreenState extends State<WordScrambleScreen> {
   void initState() {
     super.initState();
     _startTimer();
-    _fetchWordsFromFirebase(); // 🌟 اول کلمات رو دانلود می‌کنیم
+    _fetchWords(); // 🌟 اول کلمات رو دانلود می‌کنیم
   }
 
   // 📥 متد جدید برای دریافت از فایربیس
-  Future<void> _fetchWordsFromFirebase() async {
+  Future<void> _fetchWords() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('game_settings')
-          .doc('scramble_words')
-          .get();
+      final settings = await AppConfig.gameSettings('scramble_words');
+      final fetchedWords = settings['words'];
 
-      if (doc.exists && doc.data() != null) {
-        List<dynamic> fetchedWords = doc.data()!['words'];
+      if (fetchedWords is List && fetchedWords.isNotEmpty) {
         if (mounted) {
           setState(() {
             // کلمات رو می‌گیریم و مطمئن میشیم همه حروف بزرگ هستن
@@ -313,7 +310,9 @@ class _WordScrambleScreenState extends State<WordScrambleScreen> {
     );
   }
 
-  void _endGameAndClaim() {
+  Future<void> _endGameAndClaim() async {
+    if (_claiming) return;
+    _claiming = true;
     _timer?.cancel();
 
     int actualMinutes = (totalSeconds / 60).ceil();
@@ -322,12 +321,17 @@ class _WordScrambleScreenState extends State<WordScrambleScreen> {
     int earnedXp = score ~/ 2;
     if (earnedXp > 50) earnedXp = 50;
 
-    ProgressService.logActivity(
+    // The server caps game XP; show what it actually granted.
+    final granted = await ProgressService.logActivity(
       xpEarned: earnedXp,
       playedMinutes: actualMinutes,
       activityName: 'scramble',
       achievedCombo: combo,
     );
+    if (Backend.isSignedIn && AppState.activeChildId.isNotEmpty) {
+      earnedXp = granted;
+    }
+    if (!mounted) return;
 
     showDialog(
       context: context,

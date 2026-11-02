@@ -1,13 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/core/services/leaderboard_service.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/services.dart';
 
-class LeaderboardScreen extends StatelessWidget {
+class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
+
+  @override
+  State<LeaderboardScreen> createState() => _LeaderboardScreenState();
+}
+
+class _LeaderboardScreenState extends State<LeaderboardScreen> {
+  // Top list from the server function (first name, avatar, XP, is_mine).
+  late Future<List<Map<String, dynamic>>> _topFuture = LeaderboardService.top();
+
+  Future<void> _refresh() async {
+    final next = LeaderboardService.top();
+    setState(() => _topFuture = next);
+    await next;
+  }
 
   // رنگ‌های تم VIP
   final Color gold = const Color(0xFFFBBF24);
@@ -38,23 +51,17 @@ class LeaderboardScreen extends StatelessWidget {
                 _buildProHeader(context),
 
                 Expanded(
-                  child: StreamBuilder<QuerySnapshot>(
-                    // Refresh this child's public entry, then listen.
-                    stream:
-                        Stream.fromFuture(
-                          LeaderboardService.syncActiveChild(),
-                        ).asyncExpand(
-                          (_) => LeaderboardService.topQuery().snapshots(),
-                        ),
+                  child: FutureBuilder<List<Map<String, dynamic>>>(
+                    future: _topFuture,
                     builder: (context, snapshot) {
-                      // ⭐️ سیستم ضد کرش: اگر فایربیس ارور داد (مثل ارور Index)، اینجا نشونش میده
+                      // ⭐️ سیستم ضد کرش: اگر سرور ارور داد، اینجا نشونش میده
                       if (snapshot.hasError) {
                         debugPrint("Leaderboard Error: ${snapshot.error}");
                         return Center(
                           child: Padding(
                             padding: const EdgeInsets.all(20),
                             child: Text(
-                              "⚠️ Firebase Error:\n${snapshot.error}",
+                              "⚠️ Leaderboard Error:\n${snapshot.error}",
                               textAlign: TextAlign.center,
                               style: const TextStyle(
                                 color: Colors.redAccent,
@@ -73,7 +80,7 @@ class LeaderboardScreen extends StatelessWidget {
                         );
                       }
 
-                      final docs = snapshot.data?.docs ?? [];
+                      final docs = snapshot.data ?? [];
                       if (docs.isEmpty) return _buildEmptyState();
 
                       List<Map<String, dynamic>> top3 = [];
@@ -82,15 +89,12 @@ class LeaderboardScreen extends StatelessWidget {
                       int myRank = 0;
 
                       for (int i = 0; i < docs.length; i++) {
-                        // ⭐️ جادوی ضد کرش: کپی کردن لیست قفل شده فایربیس
-                        var firestoreData =
-                            docs[i].data() as Map<String, dynamic>;
-                        var data = Map<String, dynamic>.from(firestoreData);
+                        var data = Map<String, dynamic>.from(docs[i]);
 
-                        data['id'] = docs[i].id;
+                        data['id'] = docs[i]['child_id']?.toString() ?? '';
                         data['rank'] = i + 1;
 
-                        if (docs[i].id == AppState.activeChildId) {
+                        if (data['id'] == AppState.activeChildId) {
                           myData = data;
                           myRank = i + 1;
                         }
@@ -101,39 +105,44 @@ class LeaderboardScreen extends StatelessWidget {
                         }
                       }
 
-                      return Column(
-                        children: [
-                          // 🥇 بخش سکوهای VIP
-                          if (top3.isNotEmpty) _buildVIPPodium(top3),
+                      return RefreshIndicator(
+                        onRefresh: _refresh,
+                        child: Column(
+                          children: [
+                            // 🥇 بخش سکوهای VIP
+                            if (top3.isNotEmpty) _buildVIPPodium(top3),
 
-                          const SizedBox(height: 10),
+                            const SizedBox(height: 10),
 
-                          // 🥈 لیست قهرمانان
-                          Expanded(
-                            child: ListView.builder(
-                              physics: const BouncingScrollPhysics(),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 10,
+                            // 🥈 لیست قهرمانان
+                            Expanded(
+                              child: ListView.builder(
+                                physics: const AlwaysScrollableScrollPhysics(
+                                  parent: BouncingScrollPhysics(),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 10,
+                                ),
+                                itemCount: others.length,
+                                itemBuilder: (context, index) {
+                                  final data = others[index];
+                                  return _buildProListCard(
+                                    data['rank'],
+                                    data['name']?.toString() ?? 'Hero',
+                                    data['xp'] ?? 0,
+                                    data['avatar']?.toString() ?? '',
+                                    data['is_mine'] == true,
+                                  );
+                                },
                               ),
-                              itemCount: others.length,
-                              itemBuilder: (context, index) {
-                                final data = others[index];
-                                return _buildProListCard(
-                                  data['rank'],
-                                  data['name']?.toString() ?? 'Hero',
-                                  data['xp'] ?? 0,
-                                  data['avatar']?.toString() ?? '',
-                                  data['id'] == AppState.activeChildId,
-                                );
-                              },
                             ),
-                          ),
 
-                          // 🟦 نوار وضعیت من
-                          if (myData != null)
-                            _buildMyProStickyBar(myRank, myData, context),
-                        ],
+                            // 🟦 نوار وضعیت من
+                            if (myData != null)
+                              _buildMyProStickyBar(myRank, myData, context),
+                          ],
+                        ),
                       );
                     },
                   ),

@@ -1,9 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/features/child/data/avatars.dart';
 
@@ -44,6 +43,8 @@ class _ShopScreenState extends State<ShopScreen> {
     super.initState();
     _localXp = widget.currentXp;
     _localUnlockedAvatars = List.from(widget.unlockedAvatars);
+    // XP and owned avatars come from the server (guest mode stays local).
+    if (!AppState.isGuest) _syncFromServer();
   }
 
   @override
@@ -749,40 +750,42 @@ class _ShopScreenState extends State<ShopScreen> {
         return;
       }
 
-      // ۳. اگر کاربر واقعی بود، ذخیره در فایربیس
-      final parentId = FirebaseAuth.instance.currentUser?.uid;
-      if (parentId == null) throw Exception("User not logged in!");
-
-      final docRef = FirebaseFirestore.instance
-          .collection('parents')
-          .doc(parentId)
-          .collection('children')
-          .doc(AppState.activeChildId);
+      // ۳. اگر کاربر واقعی بود، خرید روی سرور (قیمت و سطح را سرور چک می‌کند)
+      if (!Backend.isSignedIn || AppState.activeChildId.isEmpty) {
+        throw Exception("User not logged in!");
+      }
 
       if (type == 'avatar') {
-        await docRef.update({
-          'xp': FieldValue.increment(-cost),
-          'unlockedAvatars': FieldValue.arrayUnion([itemId]),
-        });
-        _showSuccessToast("✨ Hero Unlocked Successfully!");
+        final result = await Rewards.buyAvatar(
+          AppState.activeChildId,
+          itemId!,
+        );
+        if (result['ok'] != true) {
+          _rollback(type, itemId, cost);
+          _showRefusal(result['reason']);
+        } else {
+          _showSuccessToast("✨ Hero Unlocked Successfully!");
+        }
       } else if (type == 'time') {
-        await docRef.update({
-          'xp': FieldValue.increment(-cost),
-          'timeBalance': FieldValue.increment(rewardMins!),
-        });
-        AppState.timeBalance += rewardMins;
-        await AppState.save(); // ⭐️ این خط اضافه شود
-        _showSuccessToast("⏳ +$rewardMins Mins added to your vault!");
-        setState(() => _selectedMinutes = 15);
+        final result = await Rewards.buyMinutes(
+          AppState.activeChildId,
+          rewardMins!,
+        );
+        if (result['ok'] != true) {
+          _rollback(type, itemId, cost);
+          _showRefusal(result['reason']);
+        } else {
+          final mins = result['minutes'] as int? ?? rewardMins;
+          _showSuccessToast("⏳ +$mins Mins added to your vault!");
+          setState(() => _selectedMinutes = 15);
+        }
       }
+      await AppState.refreshActiveChild();
+      await _syncFromServer();
     } catch (e) {
       // 🚨 ۴. در صورت ارور، پول و آواتار را برگردان
       debugPrint("Purchase Error: $e");
-      setState(() {
-        _localXp += cost;
-        if (type == 'avatar' && itemId != null)
-          _localUnlockedAvatars.remove(itemId);
-      });
+      _rollback(type, itemId, cost);
       _showSuccessToast("Connection Error! Try again. 📡", isError: true);
     } finally {
       // 🔓 ۵. باز کردن قفل
@@ -791,6 +794,49 @@ class _ShopScreenState extends State<ShopScreen> {
           _isProcessing = false;
         });
       }
+    }
+  }
+
+  /// Undoes the optimistic UI change after a failed or refused purchase.
+  void _rollback(String type, String? itemId, int cost) {
+    if (!mounted) return;
+    setState(() {
+      _localXp += cost;
+      if (type == 'avatar' && itemId != null) {
+        _localUnlockedAvatars.remove(itemId);
+      }
+    });
+  }
+
+  /// Shows the server's answer instead of what the app expected.
+  Future<void> _syncFromServer() async {
+    if (AppState.activeChildId.isEmpty) return;
+    try {
+      final child = await Children.get(AppState.activeChildId);
+      if (child == null || !mounted) return;
+      setState(() {
+        _localXp = child['xp'] as int? ?? _localXp;
+        _localUnlockedAvatars = List.from(
+          child['unlockedAvatars'] as List? ?? _localUnlockedAvatars,
+        );
+      });
+    } catch (e) {
+      debugPrint("Shop sync error: $e");
+    }
+  }
+
+  void _showRefusal(Object? reason) {
+    if (!mounted) return;
+    HapticFeedback.vibrate();
+    switch (reason) {
+      case 'level_too_low':
+        _showSuccessToast("Level up first to unlock this hero! 🔒", isError: true);
+        break;
+      case 'not_enough_xp':
+        _showSuccessToast("Need more XP! Read some books. 📚", isError: true);
+        break;
+      default:
+        _showSuccessToast("Purchase not completed. Try again. 📡", isError: true);
     }
   }
 

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/core/services/secure_storage_service.dart';
 
@@ -17,8 +16,8 @@ class DashboardController extends ChangeNotifier {
   double progressPercent = 0.0;
   int timeBalance = 0;
 
-  // استریم فایربیس (برای لغو اتصال در صورت خروج)
-  StreamSubscription<DocumentSnapshot>? _childDataSubscription;
+  // استریم زنده کودک (برای لغو اتصال در صورت خروج)
+  StreamSubscription<Map<String, dynamic>?>? _childDataSubscription;
 
   // === راه‌اندازی اولیه ===
   void initialize() {
@@ -53,45 +52,38 @@ class DashboardController extends ChangeNotifier {
     // در داشبورد والدین نیازی به دیتای بازی نداریم
   }
 
-  // --- استریم زنده اطلاعات کودک از فایربیس ---
+  // --- استریم زنده اطلاعات کودک از سرور ---
   void _startChildDataStream() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null || AppState.activeChildId.isEmpty) {
+    if (!Backend.isSignedIn || AppState.activeChildId.isEmpty) {
       isLoading = false;
       notifyListeners();
       return;
     }
 
-    _childDataSubscription = FirebaseFirestore.instance
-        .collection('parents')
-        .doc(user.uid)
-        .collection('children')
-        .doc(AppState.activeChildId)
-        .snapshots()
-        .listen(
-          (snapshot) {
-            if (snapshot.exists && snapshot.data() != null) {
-              activeData = snapshot.data() as Map<String, dynamic>;
+    _childDataSubscription = Children.watch(AppState.activeChildId).listen(
+      (child) {
+        if (child != null) {
+          activeData = child;
 
-              int totalXp = activeData['xp'] ?? 0;
-              int tBalance = activeData['timeBalance'] ?? 0;
+          int totalXp = activeData['xp'] ?? 0;
+          int tBalance = activeData['timeBalance'] ?? 0;
 
-              // همگام‌سازی با استیت محلی (AppState)
-              AppState.avatar = (activeData['avatar'] ?? 'boy1').toString();
-              AppState.timeBalance = tBalance;
+          // همگام‌سازی با استیت محلی (AppState)
+          AppState.avatar = (activeData['avatar'] ?? 'boy1').toString();
+          AppState.timeBalance = tBalance;
 
-              _calculateLevelAndProgress(totalXp, tBalance);
-            }
+          _calculateLevelAndProgress(totalXp, tBalance);
+        }
 
-            isLoading = false;
-            notifyListeners();
-          },
-          onError: (error) {
-            debugPrint("Error fetching child data: $error");
-            isLoading = false;
-            notifyListeners();
-          },
-        );
+        isLoading = false;
+        notifyListeners();
+      },
+      onError: (error) {
+        debugPrint("Error fetching child data: $error");
+        isLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
   // --- محاسبات ریاضی سطح و پیشرفت ---
@@ -104,7 +96,7 @@ class DashboardController extends ChangeNotifier {
 
   // === منطق خروج (Logout / Exit Kid Mode) ===
   Future<void> performLogout() async {
-    await FirebaseAuth.instance.signOut();
+    await Backend.db.auth.signOut();
     await SecureStorageService.clearAll();
     AppState.logout();
     await AppState.save();

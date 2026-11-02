@@ -1,8 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 
 class AdminGlobalConfigScreen extends StatefulWidget {
   const AdminGlobalConfigScreen({super.key});
@@ -33,19 +33,16 @@ class _AdminGlobalConfigScreenState extends State<AdminGlobalConfigScreen> {
 
   Future<void> _loadGlobalConfig() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('config')
-          .doc('global')
-          .get();
+      final data = await AppConfig.get('global');
 
-      if (doc.exists) {
-        final data = doc.data()!;
-        _versionController.text = data['app_version'] ?? "1.0.0";
+      if (data.isNotEmpty) {
+        _versionController.text = data['app_version']?.toString() ?? "1.0.0";
         _privacyUrlController.text =
-            data['privacy_policy_url'] ?? "https://yourwebsite.com/privacy";
+            data['privacy_policy_url']?.toString() ??
+            "https://yourwebsite.com/privacy";
         _supportEmailController.text =
-            data['support_email'] ?? "support@yourwebsite.com";
-        _forceUpdate = data['force_update'] ?? false;
+            data['support_email']?.toString() ?? "support@yourwebsite.com";
+        _forceUpdate = data['force_update'] == true;
       } else {
         _versionController.text = "1.0.0";
         _privacyUrlController.text = "https://";
@@ -63,13 +60,16 @@ class _AdminGlobalConfigScreenState extends State<AdminGlobalConfigScreen> {
     HapticFeedback.heavyImpact();
 
     try {
-      await FirebaseFirestore.instance.collection('config').doc('global').set({
+      // مثل merge در فایربیس: فیلدهای دیگرِ این ردیف حفظ می‌شوند
+      final current = await AppConfig.get('global');
+      await AppConfig.set('global', {
+        ...current,
         'app_version': _versionController.text.trim(),
         'privacy_policy_url': _privacyUrlController.text.trim(),
         'support_email': _supportEmailController.text.trim(),
         'force_update': _forceUpdate,
-        'last_updated': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+        'last_updated': DateTime.now().toUtc().toIso8601String(),
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

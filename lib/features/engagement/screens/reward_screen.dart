@@ -46,7 +46,9 @@ class _RewardScreenState extends State<RewardScreen>
     if (_applied) return;
     _applied = true;
 
-    AppState.addTime(widget.minutesEarned);
+    // Rewards are granted by the server (reward functions in Rewards);
+    // this screen only shows them and reloads the server balance.
+    await AppState.refreshActiveChild();
     AppState.updateStreak();
     await AppState.save();
     if (!mounted) return;

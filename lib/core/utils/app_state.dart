@@ -1,10 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:read_unlock_app/core/services/leaderboard_service.dart';
-import 'package:read_unlock_app/core/services/screen_time_service.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 
 class LevelRewards {
   static const Map<int, String> rewards = {
@@ -45,7 +42,7 @@ class AppState {
   static String parentPin = '';
 
   // 🔥 ACTIVE PARENT ID
-  static String? get activeParentId => FirebaseAuth.instance.currentUser?.uid;
+  static String? get activeParentId => Backend.uid;
 
   // 👶 ACTIVE CHILD SESSION
   static String activeChildName = '';
@@ -63,71 +60,35 @@ class AppState {
   static List<String> badges = [];
 
   // =========================
-  // 🔗 FIREBASE SHORTCUTS
-  // =========================
-  static DocumentReference? get currentChildRef {
-    final parentId = activeParentId;
-    if (parentId != null && activeChildId.isNotEmpty) {
-      return FirebaseFirestore.instance
-          .collection('parents')
-          .doc(parentId)
-          .collection('children')
-          .doc(activeChildId);
-    }
-    return null;
-  }
-
-  // =========================
-  // ✅ INTENT METHODS
+  // ✅ SERVER SYNC
   // =========================
 
-  static Future<void> addTime(int minutes) async {
-    if (minutes <= 0) return;
-
-    timeBalance += minutes;
-    totalEarnedTime += minutes;
-    await save();
-
-    await currentChildRef?.set({
-      'timeBalance': FieldValue.increment(minutes),
-      'totalEarnedTime': FieldValue.increment(minutes),
-    }, SetOptions(merge: true));
-  }
-
-  static Future<bool> spendTime(int minutes) async {
-    if (minutes <= 0) return true;
-    if (timeBalance < minutes) return false;
-
-    timeBalance -= minutes;
-    await save();
-
+  /// Reloads the active child's balances from the server. Rewards are
+  /// granted by server functions, so the app never adds them locally.
+  static Future<Map<String, dynamic>?> refreshActiveChild() async {
+    if (activeChildId.isEmpty || !Backend.isSignedIn) return null;
     try {
-      await currentChildRef?.update({
-        'timeBalance': FieldValue.increment(-minutes),
-      });
-      return true;
+      final child = await Children.get(activeChildId);
+      if (child == null) return null;
+      applyChild(child);
+      await save();
+      return child;
     } catch (e) {
-      print("Error spending time: $e");
-      return false;
+      debugPrint("Refresh child error: $e");
+      return null;
     }
   }
 
-  /// Gives back minutes that were taken for a session but not used.
-  /// Unlike [addTime], this is not new earnings, so totalEarnedTime and
-  /// level stay the same.
-  static Future<void> refundTime(int minutes) async {
-    if (minutes <= 0) return;
-
-    timeBalance += minutes;
-    await save();
-
-    try {
-      await currentChildRef?.update({
-        'timeBalance': FieldValue.increment(minutes),
-      });
-      await ScreenTimeService.recordUsed(-minutes);
-    } catch (e) {
-      debugPrint("Error refunding time: $e");
+  /// Copies server values for the active child into the local cache.
+  static void applyChild(Map<String, dynamic> child) {
+    timeBalance = child['timeBalance'] as int? ?? 0;
+    totalEarnedTime = child['totalEarnedTime'] as int? ?? 0;
+    final owned = (child['unlockedAvatars'] as List?)?.cast<String>() ?? [];
+    unlockedAvatars = owned.isEmpty ? ['boy1'] : owned;
+    avatar = (child['avatar'] as String?) ?? avatar;
+    final i = children.indexWhere((c) => c['id'] == child['id']);
+    if (i >= 0) {
+      children[i] = {...children[i], ...child};
     }
   }
 
@@ -194,23 +155,19 @@ class AppState {
     avatar = avatarId;
   }
 
-  static Future<bool> unlockAvatar(
-    String avatarId, {
-    required int costMinutes,
-  }) async {
+  /// Buys an avatar at the server's price. Returns false if the server
+  /// refused (not enough XP or level too low).
+  static Future<bool> unlockAvatar(String avatarId) async {
     if (unlockedAvatars.contains(avatarId)) return true;
-
-    final success = await spendTime(costMinutes);
-    if (!success) return false;
-
-    unlockedAvatars.add(avatarId);
-    await save();
-
-    await currentChildRef?.update({
-      'unlockedAvatars': FieldValue.arrayUnion([avatarId]),
-    });
-
-    return true;
+    if (activeChildId.isEmpty) return false;
+    try {
+      final result = await Rewards.buyAvatar(activeChildId, avatarId);
+      await refreshActiveChild();
+      return result['ok'] == true;
+    } catch (e) {
+      debugPrint("Unlock avatar error: $e");
+      return false;
+    }
   }
 
   static bool hasBadge(String badgeId) => badges.contains(badgeId);
@@ -233,9 +190,19 @@ class AppState {
     return children[selectedChildIndex];
   }
 
-  // 🪄 متد اضافه کردن بچه (آکولادها فیکس شد)
-  static Future<void> addChild(String name) async {
-    final newChild = createChild(name: name);
+  /// Creates the child on the server and adds it to the local list.
+  static Future<void> addChild(String name, {String? ageGroupValue}) async {
+    Map<String, dynamic> newChild;
+    if (Backend.isSignedIn) {
+      try {
+        newChild = await Children.add(name: name, ageGroup: ageGroupValue);
+      } catch (e) {
+        debugPrint("Error saving child: $e");
+        rethrow;
+      }
+    } else {
+      newChild = createChild(name: name);
+    }
     children.add(newChild);
 
     if (children.length == 1) {
@@ -243,29 +210,35 @@ class AppState {
     } else {
       _clampSelectedChildIndex();
     }
+    await save();
+  }
 
-    // آپلود در فایربیس
-    final parentId = activeParentId;
-    if (parentId != null) {
-      try {
-        await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(parentId)
-            .collection('children')
-            .doc(newChild['id'])
-            .set(newChild, SetOptions(merge: true));
-      } catch (e) {
-        print("Error saving child to Firebase: $e");
+  /// Loads this parent's children from the server into the local list.
+  static Future<void> syncChildren() async {
+    if (!Backend.isSignedIn) return;
+    try {
+      children = await Children.mine();
+      _clampSelectedChildIndex();
+      if (children.isNotEmpty) {
+        final i = children.indexWhere((c) => c['id'] == activeChildId);
+        selectChild(i >= 0 ? i : selectedChildIndex);
+        applyChild(children[selectedChildIndex]);
+      } else {
+        activeChildId = '';
+        activeChildName = '';
       }
+      await save();
+    } catch (e) {
+      debugPrint("Sync children error: $e");
     }
-  } // پایان درستِ متد addChild
+  }
 
-  // 🗑️ متد حذف اکانت (حالا سر جای درستشه)
   static Future<void> deleteChild(String childId) async {
-    // ۱. حذف از لیست محلی گوشی
+    if (Backend.isSignedIn) {
+      await Children.delete(childId);
+    }
     children.removeWhere((child) => child['id'] == childId);
 
-    // ۲. مدیریت سشن فعال
     if (activeChildId == childId) {
       activeChildId = '';
       activeChildName = '';
@@ -275,18 +248,6 @@ class AppState {
     }
 
     await save();
-
-    // ۳. حذف دائمی از دیتابیس فایربیس
-    final parentId = activeParentId;
-    if (parentId != null) {
-      await FirebaseFirestore.instance
-          .collection('parents')
-          .doc(parentId)
-          .collection('children')
-          .doc(childId)
-          .delete();
-      await LeaderboardService.removeChild(childId);
-    }
   }
 
   static void checkBadges(int score) {

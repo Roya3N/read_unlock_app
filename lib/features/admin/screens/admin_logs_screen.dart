@@ -1,17 +1,40 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 
-class AdminLogsScreen extends StatelessWidget {
+class AdminLogsScreen extends StatefulWidget {
   const AdminLogsScreen({super.key});
 
+  @override
+  State<AdminLogsScreen> createState() => _AdminLogsScreenState();
+}
+
+class _AdminLogsScreenState extends State<AdminLogsScreen> {
   final Color bgDark = const Color(0xFF0D0D17);
   final Color errorRed = const Color(0xFFEF4444);
   final Color infoBlue = const Color(0xFF3B82F6);
   final Color warningOrange = const Color(0xFFF59E0B);
+
+  late Future<List<Map<String, dynamic>>> _logsFuture = _fetchLogs();
+
+  // خواندن لاگ‌ها از جدیدترین به قدیمی‌ترین
+  Future<List<Map<String, dynamic>>> _fetchLogs() async {
+    final rows = await Backend.db
+        .from('system_logs')
+        .select()
+        .order('created_at', ascending: false)
+        .limit(500);
+    return List<Map<String, dynamic>>.from(rows);
+  }
+
+  Future<void> _reload() async {
+    final future = _fetchLogs();
+    setState(() => _logsFuture = future);
+    await future;
+  }
 
   // متد پاک کردن تمام لاگ‌ها
   Future<void> _clearAllLogs(BuildContext context) async {
@@ -46,12 +69,8 @@ class AdminLogsScreen extends StatelessWidget {
     );
 
     if (confirm == true) {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('system_logs')
-          .get();
-      for (var doc in snapshot.docs) {
-        await doc.reference.delete();
-      }
+      await Backend.db.from('system_logs').delete().gte('id', 0);
+      if (mounted) await _reload();
     }
   }
 
@@ -82,11 +101,8 @@ class AdminLogsScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('system_logs')
-            .orderBy('timestamp', descending: true)
-            .snapshots(),
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: _logsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
@@ -94,23 +110,28 @@ class AdminLogsScreen extends StatelessWidget {
             );
           }
 
-          final docs = snapshot.data?.docs ?? [];
+          final docs = snapshot.data ?? [];
 
           if (docs.isEmpty) {
             return _buildEmptyState();
           }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(20),
-            physics: const BouncingScrollPhysics(),
-            itemCount: docs.length,
-            itemBuilder: (context, index) {
-              final data = docs[index].data() as Map<String, dynamic>;
-              return _buildLogCard(
-                data,
-                docs[index].id,
-              ).animate().fadeIn().slideX(begin: 0.1, delay: (index * 50).ms);
-            },
+          return RefreshIndicator(
+            onRefresh: _reload,
+            child: ListView.builder(
+              padding: const EdgeInsets.all(20),
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics(),
+              ),
+              itemCount: docs.length,
+              itemBuilder: (context, index) {
+                final data = docs[index];
+                return _buildLogCard(
+                  data,
+                  data['id'].toString(),
+                ).animate().fadeIn().slideX(begin: 0.1, delay: (index * 50).ms);
+              },
+            ),
           );
         },
       ),
@@ -147,10 +168,15 @@ class AdminLogsScreen extends StatelessWidget {
   }
 
   Widget _buildLogCard(Map<String, dynamic> data, String docId) {
-    final String type = data['type'] ?? 'info'; // error, warning, info
-    final String message = data['message'] ?? 'Unknown event';
-    final String user = data['user'] ?? 'System';
-    final Timestamp? timestamp = data['timestamp'] as Timestamp?;
+    final String type =
+        data['level']?.toString() ?? 'info'; // error, warning, info
+    final String message = data['message']?.toString() ?? 'Unknown event';
+    final ctx = data['context'];
+    final String user =
+        (ctx is Map ? ctx['email']?.toString() : null) ?? 'System';
+    final DateTime? timestamp = DateTime.tryParse(
+      data['created_at']?.toString() ?? '',
+    )?.toLocal();
 
     Color cardColor;
     IconData iconData;
@@ -168,7 +194,7 @@ class AdminLogsScreen extends StatelessWidget {
 
     String timeString = "Unknown time";
     if (timestamp != null) {
-      timeString = DateFormat('MMM dd, HH:mm:ss').format(timestamp.toDate());
+      timeString = DateFormat('MMM dd, HH:mm:ss').format(timestamp);
     }
 
     return Container(

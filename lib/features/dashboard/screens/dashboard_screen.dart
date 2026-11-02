@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart' as fp;
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/features/admin/screens/admin_dashboard_screen.dart';
 import 'package:read_unlock_app/features/auth/screens/login_screen.dart';
@@ -298,7 +297,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _openAdminPanel() async {
     HapticFeedback.heavyImpact();
 
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Backend.currentUser;
     const adminEmail = "roya3n@gmail.com";
 
     // ۱. اگر ایمیل ادمین نبود، وانمود کن فقط یه متن مخفی پیدا کرده
