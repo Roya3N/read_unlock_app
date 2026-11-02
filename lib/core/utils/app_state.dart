@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -106,6 +107,24 @@ class AppState {
     } catch (e) {
       print("Error spending time: $e");
       return false;
+    }
+  }
+
+  /// Gives back minutes that were taken for a session but not used.
+  /// Unlike [addTime], this is not new earnings, so totalEarnedTime and
+  /// level stay the same.
+  static Future<void> refundTime(int minutes) async {
+    if (minutes <= 0) return;
+
+    timeBalance += minutes;
+    await save();
+
+    try {
+      await currentChildRef?.update({
+        'timeBalance': FieldValue.increment(minutes),
+      });
+    } catch (e) {
+      debugPrint("Error refunding time: $e");
     }
   }
 

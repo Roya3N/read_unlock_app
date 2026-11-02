@@ -20,9 +20,11 @@ class ReadingScreen extends StatefulWidget {
   final int xpReward;
   final int timeReward;
   final List<String> vocabulary;
+  final String bookId;
 
   const ReadingScreen({
     super.key,
+    required this.bookId,
     required this.pages,
     required this.pageTexts,
     required this.title,
@@ -711,21 +713,31 @@ class _ReadingScreenState extends State<ReadingScreen> {
       ),
     );
 
-    await _readingController.finalizeBookAndClaimRewards(
+    final startedAt = _gameStartTime ?? DateTime.now();
+    final decision = await _readingController.claimBookReward(
+      bookId: widget.bookId,
+      pageCount: widget.pages.length,
+      startedAt: startedAt,
+      xpReward: widget.xpReward,
+      timeReward: widget.timeReward,
       correctQuizAnswers: answeredQuizIndices.length,
-      totalQuizQuestions: widget.quiz.length,
     );
 
     if (mounted) Navigator.pop(context);
 
-    try {
-      // ۱. آپدیت زمانِ جایزه (Screen Time)
-      await DatabaseService.addDailyTime(
-        AppState.activeChildId,
-        widget.timeReward,
-      );
+    if (!decision.granted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(decision.rejectionMessage ?? "No reward this time."),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
 
-      // ۲. ذخیره کلمات جدید
+    try {
       if (widget.vocabulary.isNotEmpty) {
         await DatabaseService.saveLearnedWords(
           AppState.activeChildId,
@@ -733,15 +745,13 @@ class _ReadingScreenState extends State<ReadingScreen> {
         );
       }
 
-      // ⏱️ محاسبه زمان واقعی خوندن کتاب
-      int actualSeconds = DateTime.now().difference(_gameStartTime!).inSeconds;
-      int actualMinutes = (actualSeconds / 60).ceil();
+      // Activity chart only: real reading minutes. XP and minutes were
+      // already given in the reward transaction above.
+      int actualMinutes = (DateTime.now().difference(startedAt).inSeconds / 60)
+          .ceil();
       if (actualMinutes < 1) actualMinutes = 1;
-
-      // ۳. 🌟 جادوی مرکز فرماندهی: ثبت XP و پر کردن نمودار فعالیت امروز
-      // فرض می‌کنیم خوندن هر کتاب به اندازه همون Time Reward دقیقه طول کشیده
-      ProgressService.logActivity(
-        xpEarned: widget.xpReward,
+      await ProgressService.logActivity(
+        xpEarned: 0,
         playedMinutes: actualMinutes,
         activityName: 'reading',
       );
@@ -751,7 +761,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
     HapticFeedback.heavyImpact();
 
     if (mounted) {
-      _showQuestCompletePopup(xp: widget.xpReward, minutes: widget.timeReward);
+      _showQuestCompletePopup(xp: decision.xp, minutes: decision.minutes);
     }
   }
 

@@ -1,0 +1,23 @@
+name: Flutter checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Fails only on errors for now; the existing 800+ info/warning lints
+      # are cleaned up separately.
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - run: flutter test --exclude-tags firebase
