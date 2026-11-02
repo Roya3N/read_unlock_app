@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'child_insights_screen.dart';
+import 'package:read_unlock_app/features/system/screens/device_control_screen.dart';
 import 'add_child_screen.dart';
 
 class ParentScreen extends StatefulWidget {
@@ -305,6 +306,24 @@ class _ParentScreenState extends State<ParentScreen> {
                       );
                     },
                   ).animate().fade(duration: 400.ms).slideY(begin: -0.2),
+                ),
+
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: _buildProActionButton(
+                    label: "Device Controls",
+                    icon: Icons.phonelink_lock_rounded,
+                    color: const Color(0xFF10B981),
+                    onTap: () {
+                      HapticFeedback.lightImpact();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const DeviceControlScreen(),
+                        ),
+                      );
+                    },
+                  ),
                 ),
 
                 const SizedBox(height: 10),
