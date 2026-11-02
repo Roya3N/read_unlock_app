@@ -1,0 +1,26 @@
+name: Windows app
+
+# Builds a Windows version for testing on a PC. Download "smart-unlock-windows"
+# from the run's Artifacts, unzip it and run read_unlock_app.exe.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-unlock-windows
+          path: build/windows/x64/runner/Release/
+          retention-days: 14
