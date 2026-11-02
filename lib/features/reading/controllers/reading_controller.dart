@@ -1,15 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import '../models/book_model.dart';
 import 'package:read_unlock_app/core/utils/book_reward.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 
 class ReadingController extends ChangeNotifier {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-
   // === وضعیت‌ها ===
   bool isLoading = true;
   String errorMessage = '';
@@ -37,8 +33,8 @@ class ReadingController extends ChangeNotifier {
       errorMessage = '';
       notifyListeners();
 
-      final snapshot = await _db.collection('books').get();
-      allBooks = snapshot.docs.map((doc) => Book.fromFirestore(doc)).toList();
+      final rows = await Backend.db.from('books').select().order('created_at');
+      allBooks = rows.map(Book.fromRow).toList();
 
       _applyFilters();
 
@@ -99,82 +95,62 @@ class ReadingController extends ChangeNotifier {
   // ==========================================
   // ۲. منطق خواندن و ضد تقلب (Anti-Cheat)
   // ==========================================
+  /// Reading session started on the server, so the server clock decides
+  /// how long the book was read.
+  String? _sessionId;
+  Future<String?>? _sessionStart;
+
   void startReadingBook(Book book) {
     currentReadingBook = book;
+    startReadingSession(book.id);
+  }
+
+  /// Starts the server-side reading timer for [bookId].
+  void startReadingSession(String bookId) {
+    _sessionId = null;
+    _sessionStart = null;
+    if (Backend.isSignedIn && AppState.activeChildId.isNotEmpty) {
+      _sessionStart = Rewards.startReading(AppState.activeChildId, bookId)
+          .then<String?>((id) => _sessionId = id)
+          .catchError((Object e) {
+            debugPrint("Start reading error: $e");
+            return null;
+          });
+    }
     notifyListeners();
   }
 
-  /// Gives the reward for finishing a book in one transaction, so the
-  /// "too fast" and "already read" checks always apply.
+  /// Asks the server for the reward for finishing the book. The server
+  /// applies the same rules as [BookRewardRules] (too fast, already read,
+  /// quiz bonus) and only its answer is shown.
   Future<BookRewardDecision> claimBookReward({
-    required String bookId,
-    required int pageCount,
-    required DateTime startedAt,
-    required int xpReward,
-    required int timeReward,
     required int correctQuizAnswers,
   }) async {
-    final user = _auth.currentUser;
-    if (user == null || AppState.activeChildId.isEmpty) {
+    if (!Backend.isSignedIn || AppState.activeChildId.isEmpty) {
       return const BookRewardDecision.rejected(
         "Please sign in to save rewards.",
       );
     }
-
-    final secondsSpent = DateTime.now().difference(startedAt).inSeconds;
-
-    final childRef = _db
-        .collection('parents')
-        .doc(user.uid)
-        .collection('children')
-        .doc(AppState.activeChildId);
+    final sessionId = _sessionId ?? await _sessionStart;
+    if (sessionId == null) {
+      return const BookRewardDecision.rejected("Error saving your rewards!");
+    }
 
     try {
-      final decision = await _db.runTransaction<BookRewardDecision>((
-        transaction,
-      ) async {
-        final childSnapshot = await transaction.get(childRef);
-        if (!childSnapshot.exists) {
-          return const BookRewardDecision.rejected("Child profile not found.");
-        }
-
-        final childData = childSnapshot.data() as Map<String, dynamic>;
-        final readBooks = List<dynamic>.from(
-          childData['readBooksHistory'] ?? const [],
+      final r = await Rewards.finishReading(sessionId, correctQuizAnswers);
+      await AppState.refreshActiveChild();
+      if (r['granted'] != true) {
+        return BookRewardDecision.rejected(
+          r['reason'] == 'too_fast'
+              ? "You read too fast! Take your time to earn rewards. 🐢"
+              : "No reward this time.",
         );
-
-        final decision = BookRewardRules.decide(
-          alreadyRead: readBooks.contains(bookId),
-          secondsSpent: secondsSpent,
-          pageCount: pageCount,
-          xpReward: xpReward,
-          timeReward: timeReward,
-          correctAnswers: correctQuizAnswers,
-        );
-        if (!decision.granted) return decision;
-
-        final updates = <String, dynamic>{
-          'xp': FieldValue.increment(decision.xp),
-          'lastBookReadId': bookId,
-          'lastReadTimestamp': FieldValue.serverTimestamp(),
-        };
-        if (decision.firstRead) {
-          updates['readBooksHistory'] = FieldValue.arrayUnion([bookId]);
-        }
-        if (decision.minutes > 0) {
-          updates['timeBalance'] = FieldValue.increment(decision.minutes);
-          updates['totalEarnedTime'] = FieldValue.increment(decision.minutes);
-        }
-        transaction.update(childRef, updates);
-        return decision;
-      });
-
-      if (decision.granted && decision.minutes > 0) {
-        AppState.timeBalance += decision.minutes;
-        AppState.totalEarnedTime += decision.minutes;
-        await AppState.save();
       }
-      return decision;
+      return BookRewardDecision.fromServer(
+        firstRead: r['first_read'] == true,
+        xp: (r['xp'] as num?)?.toInt() ?? 0,
+        minutes: (r['minutes'] as num?)?.toInt() ?? 0,
+      );
     } catch (e) {
       debugPrint("Book reward error: $e");
       return const BookRewardDecision.rejected("Error saving your rewards!");

@@ -1,4 +1,4 @@
-/// Pure screen-time rules, kept free of Firebase so they can be tested.
+/// Pure screen-time rules, kept free of the backend so they can be tested.
 class ScreenTimeRules {
   /// Daily limit choices a parent can pick. 0 means no daily limit.
   static const List<int> dailyLimitChoices = [0, 30, 45, 60, 90, 120, 180];

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
@@ -39,18 +38,15 @@ class _ChildInsightsScreenState extends State<ChildInsightsScreen> {
   }
 
   Future<void> _fetchWeeklyActivity() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (!Backend.isSignedIn) return;
 
     DateTime now = DateTime.now();
     List<Map<String, dynamic>> tempData = [];
-    List<String> dateStrings = [];
 
     for (int i = 6; i >= 0; i--) {
       DateTime d = now.subtract(Duration(days: i));
       String dateStr = DateFormat('yyyy-MM-dd').format(d);
       String dayName = DateFormat('E').format(d).substring(0, 3);
-      dateStrings.add(dateStr);
       // 🌟 اضافه کردن یه جیبِ خالی برای breakdown هر روز
       tempData.add({
         'day': dayName,
@@ -61,21 +57,14 @@ class _ChildInsightsScreenState extends State<ChildInsightsScreen> {
     }
 
     try {
-      final querySnapshot = await FirebaseFirestore.instance
-          .collection('parents')
-          .doc(user.uid)
-          .collection('children')
-          .doc(widget.childId)
-          .collection('daily_activity')
-          .where('date', whereIn: dateStrings)
-          .get();
+      final rows = await Children.dailyActivity(widget.childId, days: 7);
 
       double maxVal = 0;
 
-      for (var doc in querySnapshot.docs) {
-        var data = doc.data();
-        String dDate = data['date'];
-        int mins = data['minutes'] ?? 0;
+      for (var data in rows) {
+        String dDate = data['day']?.toString() ?? '';
+        final rawMins = data['learning_minutes'];
+        int mins = rawMins is num ? rawMins.toInt() : 0;
 
         int index = tempData.indexWhere((element) => element['date'] == dDate);
         if (index != -1) {
@@ -83,8 +72,10 @@ class _ChildInsightsScreenState extends State<ChildInsightsScreen> {
           if (mins > maxVal) maxVal = mins.toDouble();
 
           // 🌟 ذخیره ریزِ فعالیت‌ها فقط برای همین روز
-          if (data.containsKey('breakdown')) {
-            Map<String, dynamic> bd = data['breakdown'];
+          if (data['breakdown'] is Map) {
+            Map<String, dynamic> bd = Map<String, dynamic>.from(
+              data['breakdown'],
+            );
             Map<String, double> dayBd = {};
             bd.forEach((key, val) {
               dayBd[key] = (val as num).toDouble();

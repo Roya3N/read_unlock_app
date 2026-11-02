@@ -1,4 +1,4 @@
-/// Pure reward rules for finishing a book, kept free of Firebase so they can
+/// Pure reward rules for finishing a book, kept free of the backend so they can
 /// be unit tested.
 class BookRewardDecision {
   final bool granted;
@@ -14,6 +14,14 @@ class BookRewardDecision {
     required this.minutes,
     this.rejectionMessage,
   });
+
+  /// What the server granted (see finish_reading in the Supabase
+  /// migrations, which applies [BookRewardRules]).
+  const BookRewardDecision.fromServer({
+    required bool firstRead,
+    required int xp,
+    required int minutes,
+  }) : this._(granted: true, firstRead: firstRead, xp: xp, minutes: minutes);
 
   const BookRewardDecision.rejected(String message)
     : this._(

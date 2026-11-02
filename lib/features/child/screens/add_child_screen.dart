@@ -1,8 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
+import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 class AddChildScreen extends StatefulWidget {
@@ -29,7 +29,7 @@ class _AddChildScreenState extends State<AddChildScreen> {
     {'title': 'Teens (13-17 years)', 'emoji': '👨', 'short': 'Teen'},
   ];
 
-  // متد ذخیره کودک در فایربیس
+  // متد ذخیره کودک در پایگاه داده
   Future<void> _saveChildToDatabase() async {
     HapticFeedback.mediumImpact();
     if (_nameController.text.trim().isEmpty) {
@@ -40,20 +40,11 @@ class _AddChildScreenState extends State<AddChildScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final String? parentId = FirebaseAuth.instance.currentUser?.uid;
-
-      if (parentId != null) {
-        await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(parentId)
-            .collection('children')
-            .add({
-              'name': _nameController.text.trim(),
-              'ageGroup': _selectedAgeGroup,
-              'timeBalance': 0,
-              'avatarUrl': 'default_avatar.png',
-              'createdAt': FieldValue.serverTimestamp(),
-            });
+      if (Backend.isSignedIn) {
+        await AppState.addChild(
+          _nameController.text.trim(),
+          ageGroupValue: _selectedAgeGroup,
+        );
 
         if (!mounted) return;
         HapticFeedback.heavyImpact();

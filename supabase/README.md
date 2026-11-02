@@ -1,8 +1,18 @@
 # Supabase
 
-The app is moving from Firebase to Supabase in stages (one PR each):
-schema and security, server reward functions, sign-in, app code, data copy,
-then retiring Firebase.
+The app runs on Supabase only: sign-in, data, rewards and content. It moved
+off Firebase in November 2026, starting fresh (old Firebase accounts and data
+were not copied).
+
+## Going live
+
+1. In the Supabase SQL Editor, run each file in `migrations/` that is not
+   applied yet, in name order.
+2. Add the admin: `insert into public.admins (user_id) select id from
+   auth.users where email = '<admin email>';` after that person has signed
+   up in the app.
+3. Add `app_config` rows as needed (`economy`, `global`, `app_settings`) from
+   the admin screens.
 
 ## Migrations
 
@@ -10,7 +20,7 @@ then retiring Firebase.
 run twice and none deletes data. Apply a file by pasting it into the Supabase
 SQL Editor, only after its PR is approved.
 
-## Where Firestore data goes
+## Where the old Firestore data lives now
 
 | Firestore | Supabase |
 | --- | --- |

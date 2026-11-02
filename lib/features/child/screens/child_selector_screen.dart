@@ -1,8 +1,7 @@
 import 'dart:ui'; // For Glassmorphism
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/features/dashboard/screens/dashboard_screen.dart';
 
@@ -11,7 +10,7 @@ class ChildSelectorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String? parentId = FirebaseAuth.instance.currentUser?.uid;
+    final String? parentId = Backend.uid;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E), // 🌌 Dark Galaxy Theme
@@ -130,13 +129,8 @@ class ChildSelectorScreen extends StatelessWidget {
                             style: TextStyle(color: Colors.redAccent),
                           ),
                         )
-                      : StreamBuilder<QuerySnapshot>(
-                          stream: FirebaseFirestore.instance
-                              .collection('parents')
-                              .doc(parentId)
-                              .collection('children')
-                              .orderBy('createdAt', descending: true)
-                              .snapshots(),
+                      : StreamBuilder<List<Map<String, dynamic>>>(
+                          stream: Children.watchMine(),
                           builder: (context, snapshot) {
                             if (snapshot.connectionState ==
                                 ConnectionState.waiting)
@@ -153,8 +147,7 @@ class ChildSelectorScreen extends StatelessWidget {
                                 ),
                               );
 
-                            if (!snapshot.hasData ||
-                                snapshot.data!.docs.isEmpty) {
+                            if (!snapshot.hasData || snapshot.data!.isEmpty) {
                               return Center(
                                 child: Container(
                                   padding: const EdgeInsets.all(30),
@@ -188,19 +181,19 @@ class ChildSelectorScreen extends StatelessWidget {
                               );
                             }
 
-                            final childrenDocs = snapshot.data!.docs;
+                            // Newest first, as before.
+                            final childrenDocs = snapshot.data!.reversed
+                                .toList();
 
                             return ListView.builder(
                               physics: const BouncingScrollPhysics(),
                               padding: const EdgeInsets.all(20),
                               itemCount: childrenDocs.length,
                               itemBuilder: (context, index) {
-                                final childData =
-                                    childrenDocs[index].data()
-                                        as Map<String, dynamic>;
+                                final childData = childrenDocs[index];
                                 final childName =
                                     childData['name'] ?? 'Unknown';
-                                final childId = childrenDocs[index].id;
+                                final String childId = childData['id'];
                                 final ageGroup = childData['ageGroup'] ?? '';
                                 final String avatar =
                                     childData['avatar'] ?? 'boy_1';
@@ -444,15 +437,7 @@ class ChildSelectorScreen extends StatelessWidget {
                                 AppState.role = 'kid';
                                 AppState.activeChildName = childName;
                                 AppState.activeChildId = childId;
-                                List<dynamic> rawAvatars =
-                                    childData['unlockedAvatars'] ?? [];
-                                AppState.unlockedAvatars = rawAvatars
-                                    .map((e) => e.toString())
-                                    .toList();
-                                AppState.timeBalance =
-                                    (childData['timeBalance'] ?? 0).toInt();
-                                AppState.avatar =
-                                    childData['avatar'] ?? 'default_avatar';
+                                AppState.applyChild(childData);
                                 await AppState.save();
 
                                 if (!context.mounted) return;
