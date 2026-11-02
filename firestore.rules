@@ -88,7 +88,11 @@ service cloud.firestore {
         && optString(after, 'ageGroup', 100)
         && optString(after, 'lastBookReadId', 200)
         && (!('level' in after) || (after.level is int && after.level >= 0))
-        && (!('records' in after) || after.records is map);
+        && (!('records' in after) || after.records is map)
+        && (!('dailyLimitMinutes' in after) || (
+              after.dailyLimitMinutes is int
+              && after.dailyLimitMinutes >= 0
+              && after.dailyLimitMinutes <= 1440));
     }
 
     // Every field the client writes on a child doc today. A new field needs
@@ -98,7 +102,8 @@ service cloud.firestore {
         'id', 'name', 'xp', 'level', 'avatar', 'avatarUrl', 'ageGroup',
         'createdAt', 'timeBalance', 'totalEarnedTime', 'learnedWords',
         'unlockedAvatars', 'unlockedCards', 'readBooksHistory',
-        'lastBookReadId', 'lastReadTimestamp', 'records'
+        'lastBookReadId', 'lastReadTimestamp', 'records',
+        'dailyLimitMinutes'
       ];
     }
 
@@ -143,12 +148,16 @@ service cloud.firestore {
           function activityOk() {
             let d = request.resource.data;
             let before = resource == null ? {} : resource.data;
-            return d.keys().hasOnly(['date', 'minutes', 'breakdown'])
+            return d.keys().hasOnly(['date', 'minutes', 'breakdown', 'screenMinutes'])
               && (!('date' in d) || d.date == day)
               && (!('minutes' in d) || (
                     d.minutes is int && d.minutes >= 0
                     && d.minutes - before.get('minutes', 0) <= 1440))
-              && (!('breakdown' in d) || d.breakdown is map);
+              && (!('breakdown' in d) || d.breakdown is map)
+              // Recreational minutes started today (screen_time_service.dart).
+              && (!('screenMinutes' in d) || (
+                    d.screenMinutes is int && d.screenMinutes >= 0
+                    && d.screenMinutes - before.get('screenMinutes', 0) <= 1440));
           }
 
           allow read: if isOwner(parentId) || isAdmin();

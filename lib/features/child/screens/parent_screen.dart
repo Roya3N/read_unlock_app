@@ -1,4 +1,6 @@
 import 'dart:ui';
+import 'package:read_unlock_app/core/services/screen_time_service.dart';
+import 'package:read_unlock_app/core/utils/screen_time_rules.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -557,6 +559,18 @@ class _ParentScreenState extends State<ParentScreen> {
                           ),
                           const SizedBox(width: 8),
                           _buildProMiniButton(
+                            Icons.timer_outlined,
+                            const Color(0xFF10B981),
+                            () => _showDailyLimitDialog(
+                              id,
+                              name,
+                              data['dailyLimitMinutes'] is int
+                                  ? data['dailyLimitMinutes'] as int
+                                  : 0,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _buildProMiniButton(
                             Icons.insights_rounded,
                             accentBlue,
                             () {
@@ -747,6 +761,91 @@ class _ParentScreenState extends State<ParentScreen> {
 
   // 🎁 پنل شیشه‌ای و حرفه‌ای برای دادن جایزه (XP / زمان) به کودک
   // ⭐️ اینجا currentXp و currentTime رو به ورودی‌ها اضافه کردیم
+  void _showDailyLimitDialog(String childId, String childName, int current) {
+    int selected = ScreenTimeRules.dailyLimitChoices.contains(current)
+        ? current
+        : 0;
+    bool saving = false;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setStateDialog) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E24),
+          title: Text(
+            "Daily screen time for $childName",
+            style: const TextStyle(color: Colors.white, fontSize: 18),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Most minutes of earned screen time $childName can start "
+                "per day. Earned minutes above this stay in the wallet "
+                "for another day.",
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: ScreenTimeRules.dailyLimitChoices.map((m) {
+                  return ChoiceChip(
+                    label: Text(m == 0 ? "No limit" : "$m min"),
+                    selected: selected == m,
+                    onSelected: saving
+                        ? null
+                        : (_) => setStateDialog(() => selected = m),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(dialogContext),
+              child: const Text("Cancel"),
+            ),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final uid = FirebaseAuth.instance.currentUser?.uid;
+                      if (uid == null) return;
+                      setStateDialog(() => saving = true);
+                      try {
+                        await ScreenTimeService.setDailyLimit(
+                          FirebaseFirestore.instance
+                              .collection('parents')
+                              .doc(uid)
+                              .collection('children')
+                              .doc(childId),
+                          selected,
+                        );
+                        if (dialogContext.mounted) {
+                          Navigator.pop(dialogContext);
+                        }
+                        _showProSnackBar(
+                          selected == 0
+                              ? "$childName has no daily limit now."
+                              : "$childName can use up to $selected min a day.",
+                          isSuccess: true,
+                        );
+                      } catch (e) {
+                        debugPrint("Daily limit save error: $e");
+                        setStateDialog(() => saving = false);
+                        _showProSnackBar("Couldn't save. Try again.");
+                      }
+                    },
+              child: const Text("Save"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showGiftDialog(
     String childId,
     String childName,

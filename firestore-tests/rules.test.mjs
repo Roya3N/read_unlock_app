@@ -74,6 +74,12 @@ await T('admin absolute set',updateDoc(doc(admin,'parents',B,'children','k2'),{x
 await T('daily set merge',setDoc(doc(owner,'parents',A,'children','k1','daily_activity','2026-11-02'),{date:'2026-11-02',minutes:increment(5),breakdown:{math:increment(5)}},{merge:true}),1);
 await T('daily wrong date',setDoc(doc(owner,'parents',A,'children','k1','daily_activity','2026-11-02'),{date:'2020-01-01'},{merge:true}),0);
 await T('daily whereIn',getDocs(query(collection(owner,'parents',A,'children','k1','daily_activity'),where('date','in',['2026-11-02','2026-11-01']))),1);
+await T('daily screenMinutes add',setDoc(doc(owner,'parents',A,'children','k1','daily_activity','2026-11-02'),{date:'2026-11-02',screenMinutes:increment(30)},{merge:true}),1);
+await T('daily screenMinutes refund',setDoc(doc(owner,'parents',A,'children','k1','daily_activity','2026-11-02'),{screenMinutes:increment(-10)},{merge:true}),1);
+await T('daily screenMinutes negative',setDoc(doc(owner,'parents',A,'children','k1','daily_activity','2026-11-02'),{screenMinutes:increment(-1000)},{merge:true}),0);
+await T('set daily limit',updateDoc(k1(owner),{dailyLimitMinutes:60}),1);
+await T('daily limit too big',updateDoc(k1(owner),{dailyLimitMinutes:5000}),0);
+await T('daily limit string',updateDoc(k1(owner),{dailyLimitMinutes:'60'}),0);
 await T('letters set',setDoc(doc(owner,'parents',A,'children','k1','letters','A'),{level:3,lastUpdated:serverTimestamp()},{merge:true}),1);
 await T('letters level 4',setDoc(doc(owner,'parents',A,'children','k1','letters','A'),{level:4},{merge:true}),0);
 await T('delete child',deleteDoc(doc(owner,'parents',A,'children','k9')),1);

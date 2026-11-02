@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
+import 'package:read_unlock_app/core/services/screen_time_service.dart';
+import 'package:read_unlock_app/core/utils/screen_time_rules.dart';
 import 'dart:ui';
 import 'timer_screen.dart';
 
@@ -22,8 +24,28 @@ class _TimeWalletScreenState extends State<TimeWalletScreen> {
   late String titleText;
   late double maxTime;
 
-  // 📊 متغیر شبیه‌سازی شده برای میزان مصرف امروز (این را بعداً به دیتابیس وصل کنید)
-  final int timeSpentToday = 45;
+  // Real usage today and the parent's daily limit (0 = no limit).
+  int timeSpentToday = 0;
+  int dailyLimit = 0;
+  bool _loadingToday = true;
+
+  int get _availableNow => ScreenTimeRules.availableNow(
+    balance: AppState.timeBalance,
+    dailyLimit: dailyLimit,
+    usedToday: timeSpentToday,
+  );
+
+  Future<void> _loadToday() async {
+    final today = await ScreenTimeService.loadToday();
+    if (!mounted) return;
+    setState(() {
+      timeSpentToday = today.usedToday;
+      dailyLimit = today.dailyLimit;
+      _loadingToday = false;
+      final cap = _availableNow < maxTime ? _availableNow : maxTime.toInt();
+      if (selectedMinutes > cap) selectedMinutes = cap.toDouble();
+    });
+  }
 
   @override
   void initState() {
@@ -50,16 +72,18 @@ class _TimeWalletScreenState extends State<TimeWalletScreen> {
       secondaryColor = const Color(0xFF8B5CF6);
       titleText = "Time Wallet";
     }
+    _loadToday();
   }
 
   Future<void> _startTimer() async {
     int minutes = selectedMinutes.toInt();
-    if (AppState.timeBalance < minutes) return;
+    if (_loadingToday || minutes <= 0 || minutes > _availableNow) return;
 
     setState(() => isProcessing = true);
     HapticFeedback.heavyImpact();
 
     bool success = await AppState.spendTime(minutes);
+    if (success) await ScreenTimeService.recordUsed(minutes);
 
     if (!mounted) return;
 
@@ -77,7 +101,9 @@ class _TimeWalletScreenState extends State<TimeWalletScreen> {
   Widget build(BuildContext context) {
     final int currentBalance = AppState.timeBalance;
     final bool hasEnoughTime =
-        currentBalance >= selectedMinutes.toInt() && selectedMinutes > 0;
+        !_loadingToday &&
+        selectedMinutes > 0 &&
+        selectedMinutes.toInt() <= _availableNow;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B0B14), // تم بی‌نهایت تاریک و شیک
@@ -188,8 +214,13 @@ class _TimeWalletScreenState extends State<TimeWalletScreen> {
 
   // 📊 طراحی ظریف کارت آمار روزانه
   Widget _buildDailyUsageCard(int balance) {
-    int totalEarned = balance + timeSpentToday;
-    double progress = totalEarned > 0 ? timeSpentToday / totalEarned : 0;
+    // With a daily limit, the ring shows used vs limit; otherwise used vs
+    // what was available today (used + balance).
+    final int ringTotal = dailyLimit > 0
+        ? dailyLimit
+        : balance + timeSpentToday;
+    double progress = ringTotal > 0 ? timeSpentToday / ringTotal : 0;
+    if (progress > 1) progress = 1;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
@@ -251,8 +282,8 @@ class _TimeWalletScreenState extends State<TimeWalletScreen> {
                     ),
                     const SizedBox(height: 12),
                     _buildStatRow(
-                      "Total Earned",
-                      "$totalEarned min",
+                      dailyLimit > 0 ? "Left Today" : "Daily Limit",
+                      dailyLimit > 0 ? "$_availableNow min" : "None",
                       Colors.white38,
                     ),
                   ],
@@ -396,6 +427,16 @@ class _TimeWalletScreenState extends State<TimeWalletScreen> {
     );
   }
 
+  String _blockedLabel() {
+    if (_loadingToday) return "LOADING...";
+    final limitLeft = dailyLimit > 0 ? dailyLimit - timeSpentToday : null;
+    if (limitLeft != null && limitLeft <= 0) return "DAILY LIMIT REACHED";
+    if (limitLeft != null && selectedMinutes.toInt() > limitLeft) {
+      return "ONLY $limitLeft MIN LEFT TODAY";
+    }
+    return "INSUFFICIENT BALANCE";
+  }
+
   // 🚀 دکمه تایید حرفه‌ای
   Widget _buildUnlockButton(bool hasEnoughTime) {
     return GestureDetector(
@@ -440,7 +481,7 @@ class _TimeWalletScreenState extends State<TimeWalletScreen> {
                   ),
                 )
               : Text(
-                  hasEnoughTime ? "CONFIRM" : "INSUFFICIENT BALANCE",
+                  hasEnoughTime ? "CONFIRM" : _blockedLabel(),
                   style: TextStyle(
                     color: hasEnoughTime ? Colors.white : Colors.white38,
                     fontWeight: FontWeight.w700,
