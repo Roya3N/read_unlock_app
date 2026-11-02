@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/services/leaderboard_service.dart';
 
 class LevelRewards {
   static const Map<int, String> rewards = {
@@ -282,6 +283,7 @@ class AppState {
           .collection('children')
           .doc(childId)
           .delete();
+      await LeaderboardService.removeChild(childId);
     }
   }
 

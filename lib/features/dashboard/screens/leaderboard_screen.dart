@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
+import 'package:read_unlock_app/core/services/leaderboard_service.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/services.dart';
@@ -38,11 +39,13 @@ class LeaderboardScreen extends StatelessWidget {
 
                 Expanded(
                   child: StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collectionGroup('children')
-                        .orderBy('xp', descending: true)
-                        .limit(50)
-                        .snapshots(),
+                    // Refresh this child's public entry, then listen.
+                    stream:
+                        Stream.fromFuture(
+                          LeaderboardService.syncActiveChild(),
+                        ).asyncExpand(
+                          (_) => LeaderboardService.topQuery().snapshots(),
+                        ),
                     builder: (context, snapshot) {
                       // ⭐️ سیستم ضد کرش: اگر فایربیس ارور داد (مثل ارور Index)، اینجا نشونش میده
                       if (snapshot.hasError) {
