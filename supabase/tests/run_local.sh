@@ -10,8 +10,11 @@ trap 'dropdb --if-exists "$DB"' EXIT
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f tests/local_stub.sql
 for f in migrations/*.sql; do
   echo "apply $f"
-  psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f"
+  PGOPTIONS="-c client_min_messages=warning" psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f"
   # Migrations must be safe to run twice.
-  psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f"
+  PGOPTIONS="-c client_min_messages=warning" psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f"
 done
-psql -q -v ON_ERROR_STOP=1 -d "$DB" -f tests/schema_rls_test.sql
+for t in tests/*_test.sql; do
+  echo "run $t"
+  psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$t"
+done
