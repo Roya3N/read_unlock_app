@@ -1,8 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 
 class AdminConfigScreen extends StatefulWidget {
   const AdminConfigScreen({super.key});
@@ -27,6 +27,16 @@ class _AdminConfigScreenState extends State<AdminConfigScreen> {
   final TextEditingController _dailyLoginController = TextEditingController();
   final TextEditingController _welcomeBonusController = TextEditingController();
 
+  // سقف‌های XP فعالیت و پاداش حروف (سرور این مقادیر را می‌خواند)
+  final TextEditingController _activityXpCapController =
+      TextEditingController();
+  final TextEditingController _dailyActivityXpCapController =
+      TextEditingController();
+  final TextEditingController _letterRewardXpController =
+      TextEditingController();
+  final TextEditingController _letterRewardMinutesController =
+      TextEditingController();
+
   // سوئیچ توقف اضطراری
   bool _isMaintenanceMode = false;
 
@@ -42,20 +52,24 @@ class _AdminConfigScreenState extends State<AdminConfigScreen> {
   // 📥 خواندن اطلاعات از فایربیس
   Future<void> _loadEconomyConfig() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('config')
-          .doc('economy')
-          .get();
+      final data = await AppConfig.get('economy');
 
-      if (doc.exists) {
-        final data = doc.data()!;
+      if (data.isNotEmpty) {
         _bookXpController.text = (data['book_reward_xp'] ?? 50).toString();
         _quizXpController.text = (data['quiz_reward_xp'] ?? 10).toString();
         _minuteCostController.text = (data['minute_cost_xp'] ?? 5).toString();
         _dailyLoginController.text = (data['daily_login_xp'] ?? 20).toString();
         _welcomeBonusController.text = (data['welcome_bonus_xp'] ?? 100)
             .toString();
-        _isMaintenanceMode = data['maintenance_mode'] ?? false;
+        _activityXpCapController.text = (data['activity_xp_cap'] ?? 100)
+            .toString();
+        _dailyActivityXpCapController.text =
+            (data['daily_activity_xp_cap'] ?? 1000).toString();
+        _letterRewardXpController.text = (data['letter_reward_xp'] ?? 50)
+            .toString();
+        _letterRewardMinutesController.text =
+            (data['letter_reward_minutes'] ?? 10).toString();
+        _isMaintenanceMode = data['maintenance_mode'] == true;
       } else {
         // مقادیر پیش‌فرض
         _bookXpController.text = "50";
@@ -63,12 +77,16 @@ class _AdminConfigScreenState extends State<AdminConfigScreen> {
         _minuteCostController.text = "5";
         _dailyLoginController.text = "20";
         _welcomeBonusController.text = "100";
+        _activityXpCapController.text = "100";
+        _dailyActivityXpCapController.text = "1000";
+        _letterRewardXpController.text = "50";
+        _letterRewardMinutesController.text = "10";
         _isMaintenanceMode = false;
       }
     } catch (e) {
       debugPrint("Error loading config: $e");
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -78,15 +96,24 @@ class _AdminConfigScreenState extends State<AdminConfigScreen> {
     HapticFeedback.heavyImpact();
 
     try {
-      await FirebaseFirestore.instance.collection('config').doc('economy').set({
+      // مثل merge در فایربیس: فیلدهای دیگرِ این ردیف حفظ می‌شوند
+      final current = await AppConfig.get('economy');
+      await AppConfig.set('economy', {
+        ...current,
         'book_reward_xp': int.tryParse(_bookXpController.text) ?? 50,
         'quiz_reward_xp': int.tryParse(_quizXpController.text) ?? 10,
         'minute_cost_xp': int.tryParse(_minuteCostController.text) ?? 5,
         'daily_login_xp': int.tryParse(_dailyLoginController.text) ?? 20,
         'welcome_bonus_xp': int.tryParse(_welcomeBonusController.text) ?? 100,
+        'activity_xp_cap': int.tryParse(_activityXpCapController.text) ?? 100,
+        'daily_activity_xp_cap':
+            int.tryParse(_dailyActivityXpCapController.text) ?? 1000,
+        'letter_reward_xp': int.tryParse(_letterRewardXpController.text) ?? 50,
+        'letter_reward_minutes':
+            int.tryParse(_letterRewardMinutesController.text) ?? 10,
         'maintenance_mode': _isMaintenanceMode,
-        'last_updated': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+        'last_updated': DateTime.now().toUtc().toIso8601String(),
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -112,7 +139,7 @@ class _AdminConfigScreenState extends State<AdminConfigScreen> {
     } catch (e) {
       debugPrint("Error saving config: $e");
     } finally {
-      setState(() => _isSaving = false);
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -123,6 +150,10 @@ class _AdminConfigScreenState extends State<AdminConfigScreen> {
     _minuteCostController.dispose();
     _dailyLoginController.dispose();
     _welcomeBonusController.dispose();
+    _activityXpCapController.dispose();
+    _dailyActivityXpCapController.dispose();
+    _letterRewardXpController.dispose();
+    _letterRewardMinutesController.dispose();
     super.dispose();
   }
 
@@ -199,6 +230,43 @@ class _AdminConfigScreenState extends State<AdminConfigScreen> {
                     icon: Icons.timer_rounded,
                     controller: _minuteCostController,
                     color: alertRed,
+                  ),
+                  const SizedBox(height: 30),
+
+                  _buildSectionTitle("🛡️ ACTIVITY LIMITS"),
+                  _buildConfigField(
+                    title: "Activity XP Cap",
+                    subtitle: "Max XP a single game or activity can grant",
+                    icon: Icons.sports_esports_rounded,
+                    controller: _activityXpCapController,
+                    color: cyberBlue,
+                  ),
+                  const SizedBox(height: 15),
+                  _buildConfigField(
+                    title: "Daily Activity XP Cap",
+                    subtitle: "Max XP a child can earn from activities per day",
+                    icon: Icons.speed_rounded,
+                    controller: _dailyActivityXpCapController,
+                    color: cyberBlue,
+                  ),
+                  const SizedBox(height: 30),
+
+                  _buildSectionTitle("🔤 LETTER REWARDS"),
+                  _buildConfigField(
+                    title: "Letter Reward XP",
+                    subtitle: "XP given when a letter is completed",
+                    icon: Icons.abc_rounded,
+                    controller: _letterRewardXpController,
+                    color: premiumGold,
+                  ),
+                  const SizedBox(height: 15),
+                  _buildConfigField(
+                    title: "Letter Reward Minutes",
+                    subtitle:
+                        "Screen-time minutes given when a letter is completed",
+                    icon: Icons.timer_outlined,
+                    controller: _letterRewardMinutesController,
+                    color: successGreen,
                   ),
 
                   const SizedBox(height: 40),

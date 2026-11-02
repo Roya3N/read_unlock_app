@@ -82,19 +82,54 @@ class _TimeWalletScreenState extends State<TimeWalletScreen> {
     setState(() => isProcessing = true);
     HapticFeedback.heavyImpact();
 
-    bool success = await AppState.spendTime(minutes);
-    if (success) await ScreenTimeService.recordUsed(minutes);
+    // The server checks the balance and daily limit and takes the minutes.
+    final result = await ScreenTimeService.start(minutes);
 
     if (!mounted) return;
 
-    if (success) {
+    if (result.ok && result.sessionId != null && result.endsAt != null) {
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => TimerScreen(minutes: minutes)),
+        MaterialPageRoute(
+          builder: (context) => TimerScreen(
+            minutes: minutes,
+            sessionId: result.sessionId!,
+            endsAt: result.endsAt!,
+          ),
+        ),
       );
     } else {
       setState(() => isProcessing = false);
+      _showStartError(result);
+      _loadToday();
     }
+  }
+
+  void _showStartError(ScreenSessionStart result) {
+    final String message;
+    switch (result.reason) {
+      case 'daily_limit':
+        final left = result.leftToday ?? 0;
+        message = left > 0
+            ? "Daily limit reached. Only $left min left today."
+            : "Daily limit reached. No more screen time today.";
+        break;
+      case 'not_enough_minutes':
+        message = "Not enough minutes. Read a book to earn more!";
+        break;
+      case 'session_running':
+        message = "A playtime session is already running.";
+        break;
+      default:
+        message = "Couldn't start the timer. Please try again.";
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override

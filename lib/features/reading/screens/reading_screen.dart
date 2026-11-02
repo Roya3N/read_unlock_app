@@ -9,7 +9,6 @@ import 'package:read_unlock_app/core/services/database_service.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/features/game/screens/quiz_screen.dart';
 import '../controllers/reading_controller.dart'; // 👈 ایمپورت کنترلر
-import 'package:read_unlock_app/core/utils/progress_service.dart';
 
 class ReadingScreen extends StatefulWidget {
   final List<String> pages;
@@ -66,12 +65,11 @@ class _ReadingScreenState extends State<ReadingScreen> {
   final Color accentNeon = const Color(0xFF4ADE80);
   final Color darkGlass = const Color(0xFF1E1E24).withOpacity(0.85);
 
-  DateTime? _gameStartTime;
 
   @override
   void initState() {
     super.initState();
-    _gameStartTime = DateTime.now();
+    _readingController.startReadingSession(widget.bookId);
     flutterTts = FlutterTts();
     _initTts(); // 👈 این متد رو الان پایین درست می‌کنیم
     startReadingDelay();
@@ -713,13 +711,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
       ),
     );
 
-    final startedAt = _gameStartTime ?? DateTime.now();
     final decision = await _readingController.claimBookReward(
-      bookId: widget.bookId,
-      pageCount: widget.pages.length,
-      startedAt: startedAt,
-      xpReward: widget.xpReward,
-      timeReward: widget.timeReward,
       correctQuizAnswers: answeredQuizIndices.length,
     );
 
@@ -737,6 +729,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
       return;
     }
 
+    // Reading minutes for the parent's chart are logged by the server.
     try {
       if (widget.vocabulary.isNotEmpty) {
         await DatabaseService.saveLearnedWords(
@@ -744,17 +737,6 @@ class _ReadingScreenState extends State<ReadingScreen> {
           widget.vocabulary,
         );
       }
-
-      // Activity chart only: real reading minutes. XP and minutes were
-      // already given in the reward transaction above.
-      int actualMinutes = (DateTime.now().difference(startedAt).inSeconds / 60)
-          .ceil();
-      if (actualMinutes < 1) actualMinutes = 1;
-      await ProgressService.logActivity(
-        xpEarned: 0,
-        playedMinutes: actualMinutes,
-        activityName: 'reading',
-      );
     } catch (_) {}
 
     await AudioService.playReward();

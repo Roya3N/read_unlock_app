@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 
 class AdminWordsScreen extends StatefulWidget {
   const AdminWordsScreen({super.key});
@@ -20,7 +20,7 @@ class _AdminWordsScreenState extends State<AdminWordsScreen> {
   final Color primaryNeon = const Color(0xFF8B5CF6);
 
   // 🚀 تابع جادویی ارسال گروهی به فایربیس
-  Future<void> _addWordsToFirebase() async {
+  Future<void> _saveWords() async {
     String jsonString = _jsonController.text.trim();
 
     if (jsonString.isEmpty) {
@@ -64,12 +64,20 @@ class _AdminWordsScreenState extends State<AdminWordsScreen> {
       }
 
       // ارسال همه با هم به فایربیس!
-      await FirebaseFirestore.instance
-          .collection('game_settings')
-          .doc('scramble_words')
-          .set({
-            'words': FieldValue.arrayUnion(validWords),
-          }, SetOptions(merge: true));
+      // مثل arrayUnion در فایربیس: فقط کلمات تکراری نیستند اضافه می‌شوند
+      final current = await AppConfig.gameSettings('scramble_words');
+      final existing = current['words'] is List
+          ? List<dynamic>.from(current['words'])
+          : <dynamic>[];
+      bool sameWord(dynamic a, Map<String, dynamic> b) =>
+          a is Map && a['word'] == b['word'] && a['hint'] == b['hint'];
+      for (final w in validWords) {
+        if (!existing.any((e) => sameWord(e, w))) existing.add(w);
+      }
+      await AppConfig.setGameSettings('scramble_words', {
+        ...current,
+        'words': existing,
+      });
 
       _showSnackBar(
         "✅ ${validWords.length} words added successfully!",
@@ -234,7 +242,7 @@ class _AdminWordsScreenState extends State<AdminWordsScreen> {
                                 ),
                               )
                             : GestureDetector(
-                                    onTap: _addWordsToFirebase,
+                                    onTap: _saveWords,
                                     child: Container(
                                       width: double.infinity,
                                       padding: const EdgeInsets.symmetric(

@@ -2,8 +2,6 @@ import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:read_unlock_app/core/services/audio_service.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'math_quest_screen.dart';
@@ -164,15 +162,15 @@ class _MathGameplayScreenState extends State<MathGameplayScreen>
       if (actualMinutes < 1) actualMinutes = 1;
 
       if (AppState.activeChildId.isNotEmpty) {
-        await FirebaseFirestore.instance;
-        // ... (کدهای آپدیت timeBalance همون قبلی باشه) ...
-
         // 🌟 ثبت زمان واقعی با اسم math
-        ProgressService.logActivity(
+        // The server caps game XP and games never give screen minutes,
+        // so the popup shows what the server granted.
+        earnedXp = await ProgressService.logActivity(
           xpEarned: earnedXp,
           playedMinutes: actualMinutes,
           activityName: 'math',
         );
+        earnedTime = 0;
       }
 
       AudioService.playReward();

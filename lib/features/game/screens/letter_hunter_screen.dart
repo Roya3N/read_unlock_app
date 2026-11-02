@@ -3,10 +3,8 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
-import 'package:intl/intl.dart';
 import 'package:read_unlock_app/core/utils/progress_service.dart';
 
 class LetterHunterScreen extends StatefulWidget {
@@ -51,27 +49,16 @@ class _LetterHunterScreenState extends State<LetterHunterScreen> {
   // 🌟 این تابع رو دقیقاً زیر initState اضافه کن:
   Future<void> _fetchPersonalBest() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null && AppState.activeChildId.isNotEmpty) {
-        final docSnap = await FirebaseFirestore.instance
-            .collection('parents')
-            .doc(user.uid)
-            .collection('children')
-            .doc(AppState.activeChildId)
-            .get();
-
-        if (docSnap.exists) {
-          final data = docSnap.data();
-          if (data != null &&
-              data.containsKey('records') &&
-              data['records']['hunter'] != null) {
-            if (mounted) {
-              setState(() {
-                // رکورد رو از دیتابیس می‌کشیم بیرون
-                personalBestCombo = data['records']['hunter']['maxCombo'] ?? 0;
-              });
-            }
-          }
+      if (AppState.activeChildId.isNotEmpty) {
+        final child = await Children.get(AppState.activeChildId);
+        final records = child?['records'] as Map<String, dynamic>?;
+        final hunter = records?['hunter'];
+        if (hunter is Map && mounted) {
+          setState(() {
+            // رکورد رو از دیتابیس می‌کشیم بیرون
+            final best = hunter['maxCombo'];
+            personalBestCombo = best is num ? best.toInt() : 0;
+          });
         }
       }
     } catch (e) {
@@ -209,7 +196,7 @@ class _LetterHunterScreenState extends State<LetterHunterScreen> {
     });
   }
 
-  void _endGame() {
+  Future<void> _endGame() async {
     gameTimer?.cancel();
     spawnTimer?.cancel();
 
@@ -220,12 +207,17 @@ class _LetterHunterScreenState extends State<LetterHunterScreen> {
 
     if (actualMinutes < 1) actualMinutes = 1; // حداقل ۱ دقیقه ثبت بشه
 
-    ProgressService.logActivity(
+    // The server caps game XP; show what it actually granted.
+    final granted = await ProgressService.logActivity(
       xpEarned: earnedXp,
       playedMinutes: actualMinutes,
       activityName: 'hunter',
       achievedCombo: maxCombo, // 👈 اسم بازی رو حتماً بنویس!
     );
+    if (Backend.isSignedIn && AppState.activeChildId.isNotEmpty) {
+      earnedXp = granted;
+    }
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,

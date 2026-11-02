@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:read_unlock_app/core/services/audio_service.dart';
 import 'package:read_unlock_app/core/services/database_service.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
+import 'package:read_unlock_app/core/utils/progress_service.dart';
 
 class QuizScreen extends StatefulWidget {
   final List<Map<String, dynamic>> quiz;
@@ -109,7 +110,12 @@ class _QuizScreenState extends State<QuizScreen> {
 
     try {
       await AudioService.playReward();
-      await DatabaseService.addDailyTime(childId, reward);
+      // Screen-time reward comes from the server's reading reward (finish_reading); this only logs learning minutes.
+      await ProgressService.logActivity(
+        xpEarned: 0,
+        playedMinutes: reward,
+        activityName: 'quiz',
+      );
       if (widget.vocabulary.isNotEmpty) {
         await DatabaseService.saveLearnedWords(childId, widget.vocabulary);
       }

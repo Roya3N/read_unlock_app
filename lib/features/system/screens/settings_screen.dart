@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:read_unlock_app/core/backend/backend.dart';
+import 'package:read_unlock_app/core/utils/app_state.dart';
 import 'package:read_unlock_app/core/services/secure_storage_service.dart';
 import 'package:read_unlock_app/features/auth/screens/login_switcher_screen.dart';
 
@@ -23,60 +23,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
 
     try {
-      User? user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      if (!Backend.isSignedIn) return;
 
-      String uid = user.uid;
-      var db = FirebaseFirestore.instance;
+      // ۱. حذف حساب روی سرور: حساب، والد، بچه‌ها و همه‌ی داده‌هایشان
+      await Backend.db.rpc('delete_my_account');
 
-      // 👈 استفاده از WriteBatch برای حذف ایمن و یکپارچه
-      WriteBatch batch = db.batch();
-
-      // ۱. آماده‌سازی حذف بچه‌ها
-      var childrenSnap = await db
-          .collection('parents')
-          .doc(uid)
-          .collection('children')
-          .get();
-      for (var doc in childrenSnap.docs) {
-        batch.delete(doc.reference); // اضافه کردن به لیست حذفیات
-      }
-
-      // ۲. آماده‌سازی حذف والد
-      DocumentReference parentRef = db.collection('parents').doc(uid);
-      batch.delete(parentRef);
-
-      // اجرای قطعی عملیات دیتابیس در یک لحظه
-      await batch.commit();
-
-      // ۳. پاک کردن پین‌کد از حافظه امن گوشی (Pro Feature)
+      // ۲. پاک کردن پین‌کد و داده‌های محلی گوشی
       await SecureStorageService.deleteParentPin();
       await SecureStorageService.resetLockout();
-      // ۴. پاک کردن کاربر از سیستم احراز هویت
-      await user.delete();
+      AppState.children = [];
+      AppState.logout();
+      await AppState.save();
 
-      // ۵. پرتاب به صفحه ورود
+      // ۳. خروج (نشست قبلی دیگر معتبر نیست)
+      try {
+        await Backend.db.auth.signOut();
+      } catch (_) {}
+
+      // ۴. پرتاب به صفحه ورود
       if (context.mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const LoginSwitcherScreen()),
           (Route<dynamic> route) => false,
         );
       }
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'requires-recent-login') {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'For security reasons, please log out and log in again to delete your account.',
-              ),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-        }
-      }
     } catch (e) {
       debugPrint("خطا در حذف اکانت: $e");
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Couldn't delete your account. Please try again."),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
