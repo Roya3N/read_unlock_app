@@ -1,33 +1,8 @@
 -- RLS and privilege tests for the app schema. Run with supabase/tests/run_local.sh.
 \set ON_ERROR_STOP 1
 \o /dev/null
-set client_min_messages = warning;
-
--- Helper: run a statement as a role/user and report whether it was allowed.
-create or replace function pg_temp.try(p_role text, p_uid text, p_sql text)
-returns text language plpgsql as $$
-declare n bigint;
-begin
-  execute format('set local role %I', p_role);
-  perform set_config('request.jwt.claim.sub', coalesce(p_uid, ''), true);
-  execute p_sql;
-  get diagnostics n = row_count;
-  reset role;
-  return 'ok:' || n;
-exception when others then
-  reset role;
-  return 'denied';
-end $$;
-
-create or replace function pg_temp.expect(p_name text, p_got text, p_want text)
-returns void language plpgsql as $$
-begin
-  if p_got is distinct from p_want then
-    raise exception 'FAIL %: got %, want %', p_name, p_got, p_want;
-  end if;
-  raise notice 'pass  %', p_name;
-end $$;
-set client_min_messages = notice;
+\i tests/helpers.sql
+begin;
 
 -- Two families and an admin.
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -45,7 +20,6 @@ insert into public.children (id, parent_id, name, xp, time_balance) values
 \set CA '''11111111-0000-0000-0000-00000000000a'''
 \set CB '''11111111-0000-0000-0000-00000000000b'''
 
-begin;
 select pg_temp.expect('signup trigger creates parent row with name',
   (select name from public.parents where id = :A), 'Parent A');
 
