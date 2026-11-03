@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
+import 'package:read_unlock_app/services/app_logger.dart';
 import 'package:read_unlock_app/features/admin/screens/admin_dashboard_screen.dart';
 import 'package:read_unlock_app/features/auth/screens/login_screen.dart';
 import 'package:read_unlock_app/features/auth/screens/pin_screen.dart';
@@ -297,26 +298,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _openAdminPanel() async {
     HapticFeedback.heavyImpact();
 
-    final user = Backend.currentUser;
-    const adminEmail = "roya3n@gmail.com";
-
-    // ۱. اگر ایمیل ادمین نبود، وانمود کن فقط یه متن مخفی پیدا کرده
-    if (user == null || user.email != adminEmail) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            "✨ You discovered a secret text!",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          backgroundColor: const Color(0xFF8B5CF6).withOpacity(0.9),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
-          ),
-        ),
-      );
-      return;
+    // ۱. نقش ادمین فقط از دیتابیس (جدول admins از طریق RPC is_admin) خوانده می‌شود،
+    // نه از ایمیل ثابت در کد. برای غیرادمین‌ها هیچ پیامی نشان نمی‌دهیم.
+    bool isAdmin = false;
+    if (Backend.currentUser != null) {
+      try {
+        isAdmin = await Backend.db.rpc('is_admin') == true;
+      } catch (e) {
+        AppLogger.error("Failed to check admin role", e);
+      }
     }
+    if (!isAdmin || !mounted) return;
 
     String enteredPin = '';
 
