@@ -298,8 +298,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _openAdminPanel() async {
     HapticFeedback.heavyImpact();
 
-    // ۱. نقش ادمین فقط از دیتابیس (جدول admins از طریق RPC is_admin) خوانده می‌شود،
-    // نه از ایمیل ثابت در کد. برای غیرادمین‌ها هیچ پیامی نشان نمی‌دهیم.
+    // Admin rights come only from the database (public.admins), never from
+    // an email or a code written in the app. Non-admins see nothing, so an
+    // accidental long-press (or held mouse button) on the title is silent.
     bool isAdmin = false;
     if (Backend.currentUser != null) {
       try {
@@ -310,167 +311,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     if (!isAdmin || !mounted) return;
 
-    String enteredPin = '';
-
-    // ۲. نمایش دیالوگ شیشه‌ای و فوق‌امنیتی
-    bool isAuthorized =
-        await showDialog(
-          context: context,
-          barrierColor: Colors.black.withOpacity(0.6), // تاریک کردن پس‌زمینه
-          builder: (context) {
-            return BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-              child: AlertDialog(
-                backgroundColor: const Color(0xFF1A1A2E).withOpacity(0.95),
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  side: BorderSide(
-                    color: const Color(0xFF8B5CF6).withOpacity(0.5),
-                    width: 1.5,
-                  ),
-                ),
-                title: const Row(
-                  children: [
-                    Icon(
-                      Icons.admin_panel_settings_rounded,
-                      color: Color(0xFF8B5CF6),
-                      size: 28,
-                    ),
-                    SizedBox(width: 10),
-                    Text(
-                      "Admin Auth",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ],
-                ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      "Enter the Master Code to access the Command Center.",
-                      style: TextStyle(color: Colors.white60, fontSize: 13),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 20),
-                    TextField(
-                      obscureText: true,
-                      autofocus: true, // کیبورد خودکار باز می‌شود
-                      style: const TextStyle(
-                        color: Colors.greenAccent,
-                        letterSpacing: 8,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'monospace',
-                      ),
-                      textAlign: TextAlign.center,
-                      decoration: InputDecoration(
-                        hintText: "••••••••",
-                        hintStyle: const TextStyle(
-                          color: Colors.white24,
-                          letterSpacing: 8,
-                        ),
-                        filled: true,
-                        fillColor: Colors.black.withOpacity(0.3),
-                        enabledBorder: OutlineInputBorder(
-                          borderSide: BorderSide(
-                            color: Colors.white.withOpacity(0.1),
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderSide: const BorderSide(
-                            color: Color(0xFF8B5CF6),
-                            width: 2,
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onChanged: (val) => enteredPin = val,
-                    ),
-                  ],
-                ),
-                actionsPadding: const EdgeInsets.only(
-                  right: 20,
-                  bottom: 20,
-                  left: 20,
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text(
-                      "Abort",
-                      style: TextStyle(
-                        color: Colors.white54,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF8B5CF6),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      elevation: 10,
-                      shadowColor: const Color(0xFF8B5CF6).withOpacity(0.5),
-                    ),
-                    onPressed: () {
-                      HapticFeedback.lightImpact();
-                      if (enteredPin == "Roya2026") {
-                        Navigator.pop(context, true);
-                      } else {
-                        Navigator.pop(context, false);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text(
-                              "❌ Access Denied! Incorrect Master Code.",
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            backgroundColor: Colors.redAccent,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(15),
-                            ),
-                          ),
-                        );
-                      }
-                    },
-                    child: const Text(
-                      "Verify",
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ) ??
-        false;
-
-    // ۳. هدایت به داشبورد مرکزی ادمین (نه فقط آپلودر)
-    if (isAuthorized) {
-      if (!mounted) return;
-      HapticFeedback.vibrate(); // ویبره تایید نهایی
-      Navigator.push(
-        context,
-        // 🚀 حالا مستقیم میره تو AdminDashboard
-        MaterialPageRoute(builder: (_) => const AdminDashboard()),
-      );
-    }
+    HapticFeedback.vibrate();
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AdminDashboard()),
+    );
   }
 
   // ==========================================
