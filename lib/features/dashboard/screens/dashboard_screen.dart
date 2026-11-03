@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:read_unlock_app/core/backend/backend.dart';
 import 'package:read_unlock_app/core/utils/app_state.dart';
+import 'package:read_unlock_app/services/app_logger.dart';
 import 'package:read_unlock_app/features/admin/screens/admin_dashboard_screen.dart';
 import 'package:read_unlock_app/features/auth/screens/login_screen.dart';
 import 'package:read_unlock_app/features/auth/screens/pin_screen.dart';
@@ -298,31 +299,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     HapticFeedback.heavyImpact();
 
     // Admin rights come only from the database (public.admins), never from
-    // an email or a code written in the app.
+    // an email or a code written in the app. Non-admins see nothing, so an
+    // accidental long-press (or held mouse button) on the title is silent.
     bool isAdmin = false;
-    try {
-      isAdmin = await Backend.db.rpc('is_admin') == true;
-    } catch (_) {
-      isAdmin = false;
+    if (Backend.currentUser != null) {
+      try {
+        isAdmin = await Backend.db.rpc('is_admin') == true;
+      } catch (e) {
+        AppLogger.error("Failed to check admin role", e);
+      }
     }
-    if (!mounted) return;
-
-    if (!isAdmin) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            "✨ You discovered a secret text!",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          backgroundColor: const Color(0xFF8B5CF6).withOpacity(0.9),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
-          ),
-        ),
-      );
-      return;
-    }
+    if (!isAdmin || !mounted) return;
 
     HapticFeedback.vibrate();
     Navigator.push(
